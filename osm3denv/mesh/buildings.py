@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import numpy as np
 import shapely
 import shapely.geometry as sg
+from shapely.geometry.polygon import orient as _orient
 from mapbox_earcut import triangulate_float64
 
 from osm3denv.fetch.osm import OSMData, OSMRelation, OSMWay
@@ -100,12 +101,16 @@ def _polygon_from_relation(rel: OSMRelation, frame: Frame) -> sg.Polygon | None:
 def _take_polygon(geom) -> sg.Polygon | None:
     if geom.is_empty:
         return None
+    poly = None
     if geom.geom_type == "Polygon":
-        return geom if geom.area >= 1.0 else None
-    if geom.geom_type == "MultiPolygon":
+        poly = geom if geom.area >= 1.0 else None
+    elif geom.geom_type == "MultiPolygon":
         best = max(geom.geoms, key=lambda g: g.area)
-        return best if best.area >= 1.0 else None
-    return None
+        poly = best if best.area >= 1.0 else None
+    if poly is None:
+        return None
+    # Force CCW exterior, CW interiors so our wall/roof winding is consistent.
+    return _orient(poly, sign=1.0)
 
 
 def _extrude(poly: sg.Polygon, height_m: float, base_y: float):
@@ -137,6 +142,16 @@ def _extrude(poly: sg.Polygon, height_m: float, base_y: float):
     wall_idx: list[tuple[int, int, int]] = []
     base_offset = 2 * n
     for ring in rings:
+        # Normalize to CCW for wall generation: outward normal = right of edge,
+        # triangle winding (a_b, b_b, b_t, a_t) is CCW when viewed from outside.
+        # Interior rings from shapely.orient are CW; reverse them.
+        signed_area = 0.0
+        m = len(ring)
+        for i in range(m):
+            signed_area += ring[i][0] * ring[(i + 1) % m][1] \
+                         - ring[(i + 1) % m][0] * ring[i][1]
+        if signed_area < 0:
+            ring = ring[::-1]
         m = len(ring)
         for i in range(m):
             a = ring[i]
