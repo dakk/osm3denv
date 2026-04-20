@@ -6,7 +6,8 @@ import Ogre
 
 def _make(name: str, diffuse: tuple[float, float, float],
           *, specular: tuple[float, float, float] | None = None,
-          alpha: float = 1.0, two_sided: bool = False) -> str:
+          alpha: float = 1.0, two_sided: bool = False,
+          depth_bias: tuple[float, float] | None = None) -> str:
     mm = Ogre.MaterialManager.getSingleton()
     if mm.resourceExists(name, "General"):
         return name
@@ -22,6 +23,10 @@ def _make(name: str, diffuse: tuple[float, float, float],
         pass_.setDepthWriteEnabled(False)
     if two_sided:
         pass_.setCullingMode(Ogre.CULL_NONE)
+    if depth_bias is not None:
+        # Polygon-offset the decal toward the camera so it wins the depth test
+        # against the terrain it sits on. (constant, slope) in depth-buffer units.
+        pass_.setDepthBias(depth_bias[0], depth_bias[1])
     return name
 
 
@@ -35,8 +40,10 @@ def buildings() -> str:
 
 
 def roads() -> str:
-    return _make("osm3d/roads", (0.22, 0.22, 0.22))
+    return _make("osm3d/roads", (0.22, 0.22, 0.22),
+                 depth_bias=(10.0, 5.0))
 
 
 def water() -> str:
-    return _make("osm3d/water", (0.20, 0.35, 0.55), alpha=0.85)
+    return _make("osm3d/water", (0.20, 0.35, 0.55), alpha=0.85,
+                 depth_bias=(1.0, 1.0))

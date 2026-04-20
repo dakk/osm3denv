@@ -42,8 +42,9 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
         sun_node.attachObject(sun)
 
         cam = scn.createCamera("cam")
-        cam.setNearClipDistance(0.5)
-        cam.setFarClipDistance(10000.0)
+        cam.setNearClipDistance(1.0)
+        # Far plane sized to the scene; tighter = more depth precision near the ground.
+        cam.setFarClipDistance(max(3000.0, 3.0 * float(self._terrain.radius_m)))
         cam.setAutoAspectRatio(True)
         cam_node = scn.getRootSceneNode().createChildSceneNode()
         cam_node.attachObject(cam)

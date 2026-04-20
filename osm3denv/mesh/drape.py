@@ -32,7 +32,7 @@ def _densify_ring(ring: np.ndarray, max_step: float) -> np.ndarray:
 
 def drape(poly: sg.Polygon, sampler: TerrainSampler,
           *, per_vertex: bool = True, flat_y: float | None = None,
-          offset: float = 0.05, max_step: float = 5.0):
+          offset: float = 0.05, max_step: float = 2.0):
     """Triangulate ``poly`` (ENU coords) and return an Ogre-frame mesh.
 
     If ``per_vertex`` is True, each vertex y is sampled from the terrain

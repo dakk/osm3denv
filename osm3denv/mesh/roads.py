@@ -80,7 +80,7 @@ def build(osm: OSMData, frame: Frame, sampler: TerrainSampler) -> RoadsMesh:
         for g in geoms:
             if g.geom_type != "Polygon":
                 continue
-            res = drape(g, sampler, per_vertex=True, offset=0.05)
+            res = drape(g, sampler, per_vertex=True, offset=0.40, max_step=1.5)
             if res is None:
                 continue
             v, n, i = res
