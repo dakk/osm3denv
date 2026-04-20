@@ -16,6 +16,16 @@ from osm3denv.mesh.sample import TerrainSampler
 log = logging.getLogger(__name__)
 
 
+def planar_uv(vertices: np.ndarray, tile_m: float = 4.0) -> np.ndarray:
+    """World-space planar UVs: U = east / tile, V = north / tile.
+
+    In our Ogre mapping vertex[:, 2] = -north so we negate to recover north.
+    """
+    u = vertices[:, 0] / tile_m
+    v = -vertices[:, 2] / tile_m
+    return np.stack([u, v], axis=-1).astype(np.float32)
+
+
 def _densify_ring(ring: np.ndarray, max_step: float) -> np.ndarray:
     out = [ring[0]]
     for i in range(len(ring) - 1):

@@ -28,9 +28,11 @@ log = logging.getLogger("osm3denv")
               help="Download data and build caches, then exit without rendering.")
 @click.option("--refresh-cache", is_flag=True,
               help="Ignore cached SRTM/OSM data for this run and re-download.")
+@click.option("--classmap-size", type=int, default=2048, show_default=True,
+              help="Pixel resolution of the landuse class-map (square).")
 @click.option("-v", "--verbose", count=True, help="Increase log verbosity (-v, -vv).")
 def main(lat, lon, radius_m, grid, cache_dir, no_buildings, no_roads, no_water,
-         fetch_only, refresh_cache, verbose):
+         fetch_only, refresh_cache, classmap_size, verbose):
     """Generate a 3D scene around (lat, lon) from OSM + SRTM data."""
     _logging.configure(verbose)
 
@@ -51,6 +53,7 @@ def main(lat, lon, radius_m, grid, cache_dir, no_buildings, no_roads, no_water,
         cache_dir=cache_dir or default_cache_dir(),
         fetch_only=fetch_only,
         refresh_cache=refresh_cache,
+        classmap_size=max(256, min(8192, int(classmap_size))),
         layers=frozenset(layers),
     )
     cfg.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -89,8 +92,8 @@ def run(cfg: Config, frame) -> None:
              float(terrain_data.heightmap.min()), float(terrain_data.heightmap.max()))
 
     buildings_data = roads_data = water_data = None
-    area_meshes: list = []
     trees_data = None
+    area_meshes: list = []
     if osm_data is not None:
         from osm3denv.mesh import areas as amesh
         from osm3denv.mesh import trees as tmesh

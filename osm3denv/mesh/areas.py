@@ -13,7 +13,7 @@ import numpy as np
 
 from osm3denv.fetch.osm import OSMData
 from osm3denv.frame import Frame
-from osm3denv.mesh.drape import drape
+from osm3denv.mesh.drape import drape, planar_uv
 from osm3denv.mesh.geom import polygon_from_way, polygons_from_relation
 from osm3denv.mesh.sample import TerrainSampler
 from osm3denv.render import materials
@@ -24,27 +24,30 @@ log = logging.getLogger(__name__)
 # Precedence: first matching entry wins, so leisure > natural > landuse.
 # (tag_key, value_set, material_factory, y_offset_m)
 AREA_CATEGORIES: list[tuple[str, set[str] | None, object, float]] = [
+    # Offset is kept at 0 for all — areas follow the terrain surface exactly;
+    # the per-material depth_bias in osm3d.material pulls them toward the
+    # camera in depth space so they win over the terrain without floating.
     ("leisure", {"park", "garden", "nature_reserve", "village_green",
                  "pitch", "playground", "recreation_ground", "common"},
-                materials.vegetation, 0.10),
+                materials.vegetation, 0.0),
     ("natural", {"wood", "scrub", "grassland", "heath"},
-                materials.vegetation, 0.10),
+                materials.vegetation, 0.0),
     ("natural", {"bare_rock", "scree"},
-                materials.rock, 0.08),
+                materials.rock, 0.0),
     ("natural", {"sand", "beach"},
-                materials.sand, 0.08),
+                materials.sand, 0.0),
     ("landuse", {"forest", "meadow", "grass", "cemetery",
                  "orchard", "vineyard", "recreation_ground",
                  "village_green", "allotments"},
-                materials.vegetation, 0.10),
+                materials.vegetation, 0.0),
     ("landuse", {"farmland", "farmyard"},
-                materials.farmland, 0.06),
+                materials.farmland, 0.0),
     ("landuse", {"residential"},
-                materials.residential, 0.05),
+                materials.residential, 0.0),
     ("landuse", {"commercial", "retail"},
-                materials.commercial, 0.05),
+                materials.commercial, 0.0),
     ("landuse", {"industrial", "construction", "railway"},
-                materials.industrial, 0.05),
+                materials.industrial, 0.0),
 ]
 
 
@@ -53,6 +56,7 @@ class AreaMesh:
     vertices: np.ndarray
     normals: np.ndarray
     indices: np.ndarray
+    uvs: np.ndarray
     material_factory: object  # callable() -> str, resolved at render time
     count: int
 
@@ -118,10 +122,12 @@ def build(osm: OSMData, frame: Frame, sampler: TerrainSampler) -> list[AreaMesh]
                 count += 1
         if not all_v:
             continue
+        vertices = np.concatenate(all_v, axis=0)
         results.append(AreaMesh(
-            vertices=np.concatenate(all_v, axis=0),
+            vertices=vertices,
             normals=np.concatenate(all_n, axis=0),
             indices=np.concatenate(all_i, axis=0),
+            uvs=planar_uv(vertices, tile_m=1.0),
             material_factory=mat_factory,
             count=count,
         ))

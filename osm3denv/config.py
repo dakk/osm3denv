@@ -13,6 +13,7 @@ class Config:
     cache_dir: Path
     fetch_only: bool
     refresh_cache: bool
+    classmap_size: int
     layers: frozenset[str]
 
     @property

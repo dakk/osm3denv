@@ -1,0 +1,91 @@
+// GLSL program declarations for osm3denv custom-shader materials.
+
+vertex_program osm3d_terrain_vs glsl
+{
+    source terrain.vert
+    default_params
+    {
+        param_named_auto world_view_proj_matrix worldviewproj_matrix
+        param_named_auto world_matrix world_matrix
+        param_named_auto camera_position camera_position
+        param_named fog_start float 1000000.0
+        param_named fog_end float 2000000.0
+    }
+}
+
+fragment_program osm3d_terrain_fs glsl
+{
+    source terrain.frag
+    default_params
+    {
+        param_named_auto ambient_colour ambient_light_colour
+        param_named_auto light_diffuse light_diffuse_colour 0
+        param_named_auto light_direction light_direction 0
+        param_named fog_colour float3 0.60 0.75 0.90
+    }
+}
+
+fragment_program osm3d_buildings_fs glsl
+{
+    source buildings.frag
+    default_params
+    {
+        param_named_auto ambient_colour ambient_light_colour
+        param_named_auto light_diffuse light_diffuse_colour 0
+        param_named_auto light_direction light_direction 0
+        param_named fog_colour float3 0.60 0.75 0.90
+    }
+}
+
+fragment_program osm3d_asphalt_fs glsl
+{
+    source asphalt.frag
+    default_params
+    {
+        param_named_auto ambient_colour ambient_light_colour
+        param_named_auto light_diffuse light_diffuse_colour 0
+        param_named_auto light_direction light_direction 0
+        param_named fog_colour float3 0.60 0.75 0.90
+    }
+}
+
+vertex_program osm3d_water_vs glsl
+{
+    source water.vert
+    default_params
+    {
+        param_named_auto world_view_proj_matrix worldviewproj_matrix
+        param_named_auto world_matrix world_matrix
+        param_named_auto camera_position camera_position
+        param_named_auto time time
+        param_named fog_start float 1000000.0
+        param_named fog_end float 2000000.0
+    }
+}
+
+fragment_program osm3d_water_fs glsl
+{
+    source water.frag
+    default_params
+    {
+        param_named_auto ambient_colour ambient_light_colour
+        param_named_auto light_diffuse light_diffuse_colour 0
+        param_named_auto light_direction light_direction 0
+        param_named_auto camera_position camera_position
+        param_named_auto time time
+        param_named fog_colour float3 0.60 0.75 0.90
+    }
+}
+
+fragment_program osm3d_area_fs glsl
+{
+    source area.frag
+    default_params
+    {
+        param_named_auto ambient_colour ambient_light_colour
+        param_named_auto light_diffuse light_diffuse_colour 0
+        param_named_auto light_direction light_direction 0
+        param_named fog_colour float3 0.60 0.75 0.90
+        param_named area_class int 0
+    }
+}

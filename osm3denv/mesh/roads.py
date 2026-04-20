@@ -10,7 +10,7 @@ import shapely.geometry as sg
 from osm3denv.fetch.osm import OSMData, OSMWay
 from osm3denv.frame import Frame
 from osm3denv.mesh.buildings import parse_height
-from osm3denv.mesh.drape import drape
+from osm3denv.mesh.drape import drape, planar_uv
 from osm3denv.mesh.sample import TerrainSampler
 
 log = logging.getLogger(__name__)
@@ -34,6 +34,7 @@ class RoadsMesh:
     vertices: np.ndarray
     normals: np.ndarray
     indices: np.ndarray
+    uvs: np.ndarray
     count: int
 
 
@@ -107,10 +108,14 @@ def build(osm: OSMData, frame: Frame, sampler: TerrainSampler) -> RoadsMesh:
 
     if not all_v:
         empty = np.zeros((0, 3), dtype=np.float32)
-        return RoadsMesh(empty, empty, np.zeros((0,), dtype=np.uint32), 0)
+        empty_uv = np.zeros((0, 2), dtype=np.float32)
+        return RoadsMesh(empty, empty, np.zeros((0,), dtype=np.uint32),
+                         empty_uv, 0)
+    vertices = np.concatenate(all_v, axis=0)
     return RoadsMesh(
-        vertices=np.concatenate(all_v, axis=0),
+        vertices=vertices,
         normals=np.concatenate(all_n, axis=0),
         indices=np.concatenate(all_i, axis=0),
+        uvs=planar_uv(vertices, tile_m=1.0),  # meters; material scales for look
         count=count,
     )

@@ -29,3 +29,11 @@ osm3denv = "osm3denv.cli:main"
 [tool.setuptools.packages.find]
 include = ["osm3denv*"]
 exclude = ["tests*", "venv*"]
+
+[tool.setuptools.package-data]
+osm3denv = [
+    "assets/shaders/*.vert",
+    "assets/shaders/*.frag",
+    "assets/materials/*.material",
+    "assets/materials/*.program",
+]

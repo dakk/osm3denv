@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import Ogre
 import Ogre.Bites as OB
@@ -11,6 +12,8 @@ from osm3denv.render import materials, upload
 from osm3denv.render.camera import FreeCamera
 
 log = logging.getLogger(__name__)
+
+_ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 
 
 class ViewerApp(OB.ApplicationContext, OB.InputListener):
@@ -25,6 +28,17 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
         self._trees = trees
         self._camera: FreeCamera | None = None
 
+    def locateResources(self):
+        # Inject our asset directories before Ogre loads resources.
+        OB.ApplicationContext.locateResources(self)
+        rgm = Ogre.ResourceGroupManager.getSingleton()
+        for sub in ("shaders", "materials"):
+            p = _ASSETS_DIR / sub
+            if p.is_dir():
+                rgm.addResourceLocation(str(p), "FileSystem",
+                                        Ogre.RGN_DEFAULT, True)
+                log.debug("resource location added: %s", p)
+
     # ApplicationContext.setup is called after initApp() creates the window + root.
     def setup(self):
         OB.ApplicationContext.setup(self)
@@ -35,6 +49,9 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
         Ogre.RTShader.ShaderGenerator.getSingleton().addSceneManager(scn)
 
         scn.setAmbientLight(Ogre.ColourValue(0.35, 0.35, 0.40))
+        # Fog disabled by default. To enable, call:
+        #   scn.setFog(Ogre.FOG_LINEAR, sky_color, 0.0, far*0.35, far*0.95)
+
         sun = scn.createLight("sun")
         sun.setType(Ogre.Light.LT_DIRECTIONAL)
         sun.setDiffuseColour(Ogre.ColourValue(1.0, 0.95, 0.85))
@@ -68,24 +85,32 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
 
     def _build_scene(self, scn):
         t = self._terrain
-        upload.attach(scn, "terrain", t.vertices, t.normals, t.indices, materials.terrain())
-        # Areas drape on terrain — render before roads so roads win via depth bias.
+        upload.attach(scn, "terrain", t.vertices, t.normals, t.indices,
+                      materials.terrain(), uvs=t.uvs)
+        # Area polygons (vegetation, residential, industrial, ...) follow the
+        # terrain surface exactly; strong per-material depth_bias makes them
+        # win the depth test against the terrain they sit on.
         for i, am in enumerate(self._areas):
-            mat_name = am.material_factory()  # registers at first call
+            mat_name = am.material_factory()
             upload.attach(scn, f"area_{i}_{mat_name}",
-                          am.vertices, am.normals, am.indices, mat_name)
+                          am.vertices, am.normals, am.indices, mat_name,
+                          uvs=am.uvs)
         if self._roads is not None:
             r = self._roads
-            upload.attach(scn, "roads", r.vertices, r.normals, r.indices, materials.roads())
+            upload.attach(scn, "roads", r.vertices, r.normals, r.indices,
+                          materials.roads(), uvs=r.uvs)
         if self._water is not None:
             w = self._water
-            upload.attach(scn, "water", w.vertices, w.normals, w.indices, materials.water())
+            upload.attach(scn, "water", w.vertices, w.normals, w.indices,
+                          materials.water(), uvs=w.uvs)
         if self._buildings is not None:
             b = self._buildings
-            upload.attach(scn, "buildings", b.vertices, b.normals, b.indices, materials.buildings())
+            upload.attach(scn, "buildings", b.vertices, b.normals, b.indices,
+                          materials.buildings(), uvs=b.uvs)
         if self._trees is not None and self._trees.count > 0:
             tr = self._trees
-            upload.attach(scn, "trees", tr.vertices, tr.normals, tr.indices, materials.trees())
+            upload.attach(scn, "trees", tr.vertices, tr.normals, tr.indices,
+                          materials.trees())  # no UVs: flat-colour material
 
     def keyPressed(self, evt) -> bool:
         if evt.keysym.sym == OB.SDLK_ESCAPE:

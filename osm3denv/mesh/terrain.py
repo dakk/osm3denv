@@ -20,6 +20,7 @@ class TerrainData:
     vertices: np.ndarray   # (N, 3) float32
     normals: np.ndarray    # (N, 3) float32
     indices: np.ndarray    # (T*3,) uint32
+    uvs: np.ndarray        # (N, 2) float32
     heightmap: np.ndarray  # (G, G) float32 — zero-centered at origin
     radius_m: float
     sampler: TerrainSampler
@@ -84,8 +85,12 @@ def build(*, frame: Frame, radius_m: float, grid: int,
     tri2 = np.stack([i0, i2, i3], axis=-1)
     indices = np.concatenate([tri1.reshape(-1, 3), tri2.reshape(-1, 3)], axis=0).ravel()
 
+    # UVs: world-space planar; 1 unit = 1 meter. Terrain shader scales further.
+    uvs = np.stack([vertices[:, 0], -vertices[:, 2]], axis=-1).astype(np.float32)
+
     sampler = TerrainSampler(heightmap=heightmap, radius_m=radius_m)
     return TerrainData(vertices=vertices, normals=norms, indices=indices,
+                       uvs=uvs,
                        heightmap=heightmap, radius_m=radius_m, sampler=sampler,
                        origin_alt_m=h0)
 
