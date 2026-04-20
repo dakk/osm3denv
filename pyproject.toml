@@ -34,6 +34,7 @@ exclude = ["tests*", "venv*"]
 osm3denv = [
     "assets/shaders/*.vert",
     "assets/shaders/*.frag",
+    "assets/shaders/*.geom",
     "assets/materials/*.material",
     "assets/materials/*.program",
 ]
