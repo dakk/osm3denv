@@ -67,18 +67,17 @@ def run(cfg: Config, frame) -> None:
     from osm3denv.mesh import terrain as terrain_mesh
 
     # OSM first so the sea mask (if any) can be applied to the terrain before meshing.
-    osm_data = None
+    # Areas + trees are always on, so we always need OSM data.
+    from osm3denv.fetch import osm as osm_fetch
+    osm_data = osm_fetch.fetch(frame=frame, radius_m=cfg.radius_m,
+                               cache_dir=cfg.osm_cache,
+                               refresh=cfg.refresh_cache)
     sea_poly = None
-    if {"buildings", "roads", "water"} & cfg.layers:
-        from osm3denv.fetch import osm as osm_fetch
-        osm_data = osm_fetch.fetch(frame=frame, radius_m=cfg.radius_m,
-                                   cache_dir=cfg.osm_cache,
-                                   refresh=cfg.refresh_cache)
-        if "water" in cfg.layers:
-            from osm3denv.mesh.water import build_sea_polygon
-            sea_poly = build_sea_polygon(osm_data, frame, cfg.radius_m)
-            if sea_poly is not None:
-                log.info("sea polygon area=%.0f m² (%s)", sea_poly.area, sea_poly.geom_type)
+    if "water" in cfg.layers:
+        from osm3denv.mesh.water import build_sea_polygon
+        sea_poly = build_sea_polygon(osm_data, frame, cfg.radius_m)
+        if sea_poly is not None:
+            log.info("sea polygon area=%.0f m² (%s)", sea_poly.area, sea_poly.geom_type)
 
     terrain_data = terrain_mesh.build(
         frame=frame, radius_m=cfg.radius_m, grid=cfg.grid,
@@ -90,7 +89,19 @@ def run(cfg: Config, frame) -> None:
              float(terrain_data.heightmap.min()), float(terrain_data.heightmap.max()))
 
     buildings_data = roads_data = water_data = None
+    area_meshes: list = []
+    trees_data = None
     if osm_data is not None:
+        from osm3denv.mesh import areas as amesh
+        from osm3denv.mesh import trees as tmesh
+
+        area_meshes = amesh.build(osm_data, frame, terrain_data.sampler)
+        log.info("areas: %d materials, %d polygons",
+                 len(area_meshes), sum(m.count for m in area_meshes))
+        trees_data = tmesh.build(osm_data, frame, terrain_data.sampler,
+                                  radius_m=cfg.radius_m)
+        log.info("trees: %d", trees_data.count)
+
         if "buildings" in cfg.layers:
             from osm3denv.mesh import buildings as bmesh
             buildings_data = bmesh.build(osm_data, frame, terrain_data.sampler)
@@ -115,7 +126,8 @@ def run(cfg: Config, frame) -> None:
 
     from osm3denv.render.app import run_viewer
     run_viewer(terrain=terrain_data, buildings=buildings_data,
-               roads=roads_data, water=water_data)
+               roads=roads_data, water=water_data,
+               areas=area_meshes, trees=trees_data)
 
 
 if __name__ == "__main__":

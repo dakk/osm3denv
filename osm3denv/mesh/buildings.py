@@ -2,29 +2,22 @@
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass
 
 import numpy as np
-import shapely
 import shapely.geometry as sg
-from shapely.geometry.polygon import orient as _orient
 from mapbox_earcut import triangulate_float64
 
-from osm3denv.fetch.osm import OSMData, OSMRelation, OSMWay
+from osm3denv.fetch.osm import OSMData
 from osm3denv.frame import Frame
+from osm3denv.mesh.geom import (
+    parse_number as parse_height,
+    polygon_from_relation,
+    polygon_from_way,
+)
 from osm3denv.mesh.sample import TerrainSampler
 
 log = logging.getLogger(__name__)
-
-_NUM_RE = re.compile(r"([-+]?\d*\.?\d+)")
-
-
-def parse_height(s: str | None) -> float | None:
-    if not s:
-        return None
-    m = _NUM_RE.search(s)
-    return float(m.group(1)) if m else None
 
 
 def resolve_height(tags: dict[str, str]) -> float:
@@ -45,72 +38,6 @@ class BuildingsMesh:
     count: int
 
 
-def _ring_to_enu(ring_ll, frame: Frame) -> np.ndarray:
-    lon = np.asarray([p[0] for p in ring_ll], dtype=np.float64)
-    lat = np.asarray([p[1] for p in ring_ll], dtype=np.float64)
-    east, north = frame.to_enu(lon, lat)
-    return np.stack([east, north], axis=-1)
-
-
-def _is_closed(ring: np.ndarray, tol: float = 0.5) -> bool:
-    return len(ring) >= 3 and np.linalg.norm(ring[0] - ring[-1]) <= tol
-
-
-def _polygon_from_way(way: OSMWay, frame: Frame) -> sg.Polygon | None:
-    ring = _ring_to_enu(way.geometry, frame)
-    if not _is_closed(ring):
-        return None
-    try:
-        poly = sg.Polygon(ring[:-1])
-        fixed = shapely.make_valid(poly.buffer(0))
-    except Exception:  # noqa: BLE001
-        return None
-    return _take_polygon(fixed)
-
-
-def _polygon_from_relation(rel: OSMRelation, frame: Frame) -> sg.Polygon | None:
-    outers = [r for (role, r) in rel.rings if role == "outer"]
-    inners = [r for (role, r) in rel.rings if role == "inner"]
-    if not outers:
-        return None
-    # v1 simplification: use the first closed outer as the polygon; any inner fully
-    # contained inside it becomes a hole.
-    for outer_ll in outers:
-        outer = _ring_to_enu(outer_ll, frame)
-        if not _is_closed(outer):
-            continue
-        try:
-            base = sg.Polygon(outer[:-1])
-            holes = []
-            for inner_ll in inners:
-                inner = _ring_to_enu(inner_ll, frame)
-                if _is_closed(inner):
-                    h = sg.Polygon(inner[:-1])
-                    if base.contains(h):
-                        holes.append(list(h.exterior.coords)[:-1])
-            base = sg.Polygon(list(base.exterior.coords)[:-1], holes)
-            fixed = shapely.make_valid(base.buffer(0))
-        except Exception:  # noqa: BLE001
-            continue
-        poly = _take_polygon(fixed)
-        if poly is not None:
-            return poly
-    return None
-
-
-def _take_polygon(geom) -> sg.Polygon | None:
-    if geom.is_empty:
-        return None
-    poly = None
-    if geom.geom_type == "Polygon":
-        poly = geom if geom.area >= 1.0 else None
-    elif geom.geom_type == "MultiPolygon":
-        best = max(geom.geoms, key=lambda g: g.area)
-        poly = best if best.area >= 1.0 else None
-    if poly is None:
-        return None
-    # Force CCW exterior, CW interiors so our wall/roof winding is consistent.
-    return _orient(poly, sign=1.0)
 
 
 def _extrude(poly: sg.Polygon, height_m: float, base_y: float):
@@ -205,7 +132,7 @@ def build(osm: OSMData, frame: Frame, sampler: TerrainSampler) -> BuildingsMesh:
         count += 1
 
     for w in osm.filter_ways(lambda t: "building" in t or "building:part" in t):
-        poly = _polygon_from_way(w, frame)
+        poly = polygon_from_way(w, frame)
         if poly is None:
             continue
         h = resolve_height(w.tags)
@@ -216,7 +143,7 @@ def build(osm: OSMData, frame: Frame, sampler: TerrainSampler) -> BuildingsMesh:
             add(ext)
 
     for r in osm.filter_relations(lambda t: "building" in t):
-        poly = _polygon_from_relation(r, frame)
+        poly = polygon_from_relation(r, frame)
         if poly is None:
             continue
         h = resolve_height(r.tags)

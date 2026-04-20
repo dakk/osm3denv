@@ -69,6 +69,8 @@ def build(osm: OSMData, frame: Frame, sampler: TerrainSampler) -> RoadsMesh:
 
     candidates = osm.filter_ways(lambda t: "highway" in t or "railway" in t)
     for way in candidates:
+        if way.tags.get("tunnel") == "yes":
+            continue  # hide tunnels; they live underground.
         line = _way_to_enu_line(way, frame)
         if line is None:
             continue
@@ -76,11 +78,24 @@ def build(osm: OSMData, frame: Frame, sampler: TerrainSampler) -> RoadsMesh:
         poly = line.buffer(width / 2.0, cap_style="flat", join_style="mitre")
         if poly.is_empty:
             continue
+
+        is_bridge = way.tags.get("bridge") == "yes"
+        if is_bridge:
+            layer = parse_height(way.tags.get("layer")) or 1.0
+            lift = max(3.0, 5.0 * float(layer))
+            ys = [float(sampler.height_at(x, y)) for x, y in line.coords]
+            flat_y = max(ys) + lift
+
         geoms = [poly] if poly.geom_type == "Polygon" else list(poly.geoms)
         for g in geoms:
             if g.geom_type != "Polygon":
                 continue
-            res = drape(g, sampler, per_vertex=True, offset=0.40, max_step=1.5)
+            if is_bridge:
+                res = drape(g, sampler, per_vertex=False, flat_y=flat_y,
+                            offset=0.0, max_step=1.5)
+            else:
+                res = drape(g, sampler, per_vertex=True, offset=0.40,
+                            max_step=1.5)
             if res is None:
                 continue
             v, n, i = res

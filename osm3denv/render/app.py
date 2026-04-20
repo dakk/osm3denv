@@ -14,13 +14,15 @@ log = logging.getLogger(__name__)
 
 
 class ViewerApp(OB.ApplicationContext, OB.InputListener):
-    def __init__(self, terrain, buildings, roads, water):
+    def __init__(self, terrain, buildings, roads, water, areas, trees):
         OB.ApplicationContext.__init__(self, "osm3denv")
         OB.InputListener.__init__(self)
         self._terrain = terrain
         self._buildings = buildings
         self._roads = roads
         self._water = water
+        self._areas = areas or []
+        self._trees = trees
         self._camera: FreeCamera | None = None
 
     # ApplicationContext.setup is called after initApp() creates the window + root.
@@ -67,15 +69,23 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
     def _build_scene(self, scn):
         t = self._terrain
         upload.attach(scn, "terrain", t.vertices, t.normals, t.indices, materials.terrain())
-        if self._buildings is not None:
-            b = self._buildings
-            upload.attach(scn, "buildings", b.vertices, b.normals, b.indices, materials.buildings())
+        # Areas drape on terrain — render before roads so roads win via depth bias.
+        for i, am in enumerate(self._areas):
+            mat_name = am.material_factory()  # registers at first call
+            upload.attach(scn, f"area_{i}_{mat_name}",
+                          am.vertices, am.normals, am.indices, mat_name)
         if self._roads is not None:
             r = self._roads
             upload.attach(scn, "roads", r.vertices, r.normals, r.indices, materials.roads())
         if self._water is not None:
             w = self._water
             upload.attach(scn, "water", w.vertices, w.normals, w.indices, materials.water())
+        if self._buildings is not None:
+            b = self._buildings
+            upload.attach(scn, "buildings", b.vertices, b.normals, b.indices, materials.buildings())
+        if self._trees is not None and self._trees.count > 0:
+            tr = self._trees
+            upload.attach(scn, "trees", tr.vertices, tr.normals, tr.indices, materials.trees())
 
     def keyPressed(self, evt) -> bool:
         if evt.keysym.sym == OB.SDLK_ESCAPE:
@@ -84,8 +94,8 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
         return False
 
 
-def run_viewer(*, terrain, buildings, roads, water) -> None:
-    app = ViewerApp(terrain, buildings, roads, water)
+def run_viewer(*, terrain, buildings, roads, water, areas=None, trees=None) -> None:
+    app = ViewerApp(terrain, buildings, roads, water, areas, trees)
     app.initApp()
     try:
         app.getRoot().startRendering()

@@ -47,3 +47,44 @@ def roads() -> str:
 def water() -> str:
     return _make("osm3d/water", (0.20, 0.35, 0.55), alpha=0.85,
                  depth_bias=(1.0, 1.0))
+
+
+def vegetation() -> str:
+    return _make("osm3d/vegetation", (0.35, 0.60, 0.25),
+                 specular=(0.05, 0.05, 0.05),
+                 depth_bias=(2.0, 1.0))
+
+
+def farmland() -> str:
+    return _make("osm3d/farmland", (0.70, 0.58, 0.35),
+                 depth_bias=(2.0, 1.0))
+
+
+def sand() -> str:
+    return _make("osm3d/sand", (0.86, 0.80, 0.55),
+                 depth_bias=(2.0, 1.0))
+
+
+def rock() -> str:
+    return _make("osm3d/rock", (0.55, 0.52, 0.48),
+                 depth_bias=(2.0, 1.0))
+
+
+def residential() -> str:
+    return _make("osm3d/residential", (0.75, 0.68, 0.55),
+                 depth_bias=(1.5, 1.0))
+
+
+def commercial() -> str:
+    return _make("osm3d/commercial", (0.78, 0.62, 0.45),
+                 depth_bias=(1.5, 1.0))
+
+
+def industrial() -> str:
+    return _make("osm3d/industrial", (0.50, 0.50, 0.50),
+                 depth_bias=(1.5, 1.0))
+
+
+def trees() -> str:
+    return _make("osm3d/trees", (0.25, 0.50, 0.18),
+                 specular=(0.05, 0.05, 0.05))

@@ -38,15 +38,27 @@ class OSMRelation:
 
 
 @dataclass
+class OSMNode:
+    id: int
+    tags: dict[str, str]
+    lon: float
+    lat: float
+
+
+@dataclass
 class OSMData:
     ways: list[OSMWay] = field(default_factory=list)
     relations: list[OSMRelation] = field(default_factory=list)
+    nodes: list[OSMNode] = field(default_factory=list)
 
     def filter_ways(self, predicate) -> list[OSMWay]:
         return [w for w in self.ways if predicate(w.tags)]
 
     def filter_relations(self, predicate) -> list[OSMRelation]:
         return [r for r in self.relations if predicate(r.tags)]
+
+    def filter_nodes(self, predicate) -> list[OSMNode]:
+        return [n for n in self.nodes if predicate(n.tags)]
 
 
 def _build_query(bbox_ll: tuple[float, float, float, float]) -> str:
@@ -63,6 +75,13 @@ def _build_query(bbox_ll: tuple[float, float, float, float]) -> str:
   relation["natural"="water"]({bb});
   way["waterway"]({bb});
   way["natural"="coastline"]({bb});
+  way["landuse"]({bb});
+  relation["landuse"]({bb});
+  way["leisure"]({bb});
+  relation["leisure"]({bb});
+  way["natural"~"^(wood|scrub|grassland|heath|bare_rock|sand|beach|scree)$"]({bb});
+  relation["natural"~"^(wood|scrub|grassland|heath)$"]({bb});
+  node["natural"="tree"]({bb});
 );
 out geom;
 """
@@ -114,7 +133,10 @@ def _parse(data: dict) -> OSMData:
                     rings.append((role, ring))
             if rings:
                 out.relations.append(OSMRelation(id=el["id"], tags=tags, rings=rings))
-        # nodes: ignored — we use inline way/relation geometry.
+        elif tp == "node" and tags:
+            out.nodes.append(OSMNode(id=el["id"], tags=tags,
+                                     lon=el["lon"], lat=el["lat"]))
+        # Tag-less nodes are geometry-only refs for ways; skipped.
     return out
 
 
