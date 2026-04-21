@@ -73,7 +73,7 @@ vec3 apply_aerial(vec3 lit, vec3 world_pos, vec3 cam_pos, vec3 sun_dir) {
     vec3 v = world_pos - cam_pos;
     float d = length(v);
     vec3 view_dir = v / max(d, 1e-4);
-    float aerial = 1.0 - exp(-max(d - 100.0, 0.0) * 0.0004);
+    float aerial = (1.0 - exp(-max(d - 200.0, 0.0) * 0.00020)) * 0.70;
     return mix(lit, atmos_sky(view_dir, sun_dir), aerial);
 }
 
@@ -205,10 +205,10 @@ void main() {
     vec3 base;
     float roughness;
     float metallic = 0.0;
-    if (up > 0.6) {
+    if (up > 0.35) {
         base = roof_pattern(v_uv);
         roughness = 0.75;                   // terracotta tiles
-    } else if (up < -0.6) {
+    } else if (up < -0.35) {
         base = vec3(0.28, 0.26, 0.24);
         roughness = 0.90;                   // unlit underside, matte
     } else {
