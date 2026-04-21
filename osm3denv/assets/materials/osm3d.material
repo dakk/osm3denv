@@ -155,7 +155,7 @@ material osm3d/buildings
     {
         pass
         {
-            vertex_program_ref osm3d_terrain_vs { }
+            vertex_program_ref osm3d_buildings_vs { }
             fragment_program_ref osm3d_buildings_fs { }
         }
     }
@@ -167,7 +167,7 @@ material osm3d/buildings_pbr
     {
         pass
         {
-            vertex_program_ref osm3d_terrain_vs { }
+            vertex_program_ref osm3d_buildings_vs { }
             fragment_program_ref osm3d_buildings_pbr_fs { }
             texture_unit brick_albedo
         {
@@ -203,7 +203,7 @@ material osm3d/buildings_pbr_full
     {
         pass
         {
-            vertex_program_ref osm3d_terrain_vs { }
+            vertex_program_ref osm3d_buildings_vs { }
             fragment_program_ref osm3d_buildings_pbr_full_fs { }
             texture_unit brick_albedo
         {
@@ -261,7 +261,7 @@ material osm3d/buildings_pbr_full
 material osm3d/buildings_pbr_v1
 {
     technique { pass {
-        vertex_program_ref osm3d_terrain_vs { }
+        vertex_program_ref osm3d_buildings_vs { }
         fragment_program_ref osm3d_buildings_pbr_full_fs { }
         texture_unit brick_albedo
         {
@@ -318,7 +318,7 @@ material osm3d/buildings_pbr_v1
 material osm3d/buildings_pbr_v2
 {
     technique { pass {
-        vertex_program_ref osm3d_terrain_vs { }
+        vertex_program_ref osm3d_buildings_vs { }
         fragment_program_ref osm3d_buildings_pbr_full_fs { }
         texture_unit brick_albedo
         {
@@ -371,119 +371,6 @@ material osm3d/buildings_pbr_v2
     } }
 }
 
-// Variant 3: ochre/warm plaster walls + terracotta tile roof (Mediterranean).
-material osm3d/buildings_pbr_v3
-{
-    technique { pass {
-        vertex_program_ref osm3d_terrain_vs { }
-        fragment_program_ref osm3d_buildings_pbr_full_fs { }
-        texture_unit brick_albedo
-        {
-            texture PaintedPlaster017_2K-PNG_Color.png
-            filtering trilinear
-            tex_address_mode wrap
-        }
-        texture_unit brick_normal
-        {
-            texture PaintedPlaster017_2K-PNG_NormalGL.png
-            filtering trilinear
-            tex_address_mode wrap
-        }
-        texture_unit brick_rough
-        {
-            texture PaintedPlaster017_2K-PNG_Roughness.png
-            filtering trilinear
-            tex_address_mode wrap
-        }
-        texture_unit brick_ao
-        {
-            texture PaintedPlaster017_2K-PNG_AmbientOcclusion.png
-            filtering trilinear
-            tex_address_mode wrap
-        }
-        texture_unit roof_albedo
-        {
-            texture RoofingTiles010_2K-PNG_Color.png
-            filtering trilinear
-            tex_address_mode wrap
-        }
-        texture_unit roof_normal
-        {
-            texture RoofingTiles010_2K-PNG_NormalGL.png
-            filtering trilinear
-            tex_address_mode wrap
-        }
-        texture_unit roof_rough
-        {
-            texture RoofingTiles010_2K-PNG_Roughness.png
-            filtering trilinear
-            tex_address_mode wrap
-        }
-        texture_unit roof_ao
-        {
-            texture RoofingTiles010_2K-PNG_AmbientOcclusion.png
-            filtering trilinear
-            tex_address_mode wrap
-        }
-    } }
-}
-
-// Variant 4: cream plaster walls + slate roof (northern Italian).
-material osm3d/buildings_pbr_v4
-{
-    technique { pass {
-        vertex_program_ref osm3d_terrain_vs { }
-        fragment_program_ref osm3d_buildings_pbr_full_fs { }
-        texture_unit brick_albedo
-        {
-            texture PaintedPlaster003_2K-PNG_Color.png
-            filtering trilinear
-            tex_address_mode wrap
-        }
-        texture_unit brick_normal
-        {
-            texture PaintedPlaster003_2K-PNG_NormalGL.png
-            filtering trilinear
-            tex_address_mode wrap
-        }
-        texture_unit brick_rough
-        {
-            texture PaintedPlaster003_2K-PNG_Roughness.png
-            filtering trilinear
-            tex_address_mode wrap
-        }
-        texture_unit brick_ao
-        {
-            texture PaintedPlaster003_2K-PNG_AmbientOcclusion.png
-            filtering trilinear
-            tex_address_mode wrap
-        }
-        texture_unit roof_albedo
-        {
-            texture RoofingTiles002_2K-PNG_Color.png
-            filtering trilinear
-            tex_address_mode wrap
-        }
-        texture_unit roof_normal
-        {
-            texture RoofingTiles002_2K-PNG_NormalGL.png
-            filtering trilinear
-            tex_address_mode wrap
-        }
-        texture_unit roof_rough
-        {
-            texture RoofingTiles002_2K-PNG_Roughness.png
-            filtering trilinear
-            tex_address_mode wrap
-        }
-        texture_unit roof_ao
-        {
-            texture RoofingTiles002_2K-PNG_AmbientOcclusion.png
-            filtering trilinear
-            tex_address_mode wrap
-        }
-    } }
-}
 
 material osm3d/roads
 {

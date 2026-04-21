@@ -10,6 +10,16 @@ vertex_program osm3d_terrain_vs glsl
     }
 }
 
+vertex_program osm3d_buildings_vs glsl
+{
+    source buildings.vert
+    default_params
+    {
+        param_named_auto world_view_proj_matrix worldviewproj_matrix
+        param_named_auto world_matrix world_matrix
+    }
+}
+
 fragment_program osm3d_terrain_fs glsl
 {
     source terrain.frag

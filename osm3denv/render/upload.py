@@ -7,10 +7,12 @@ import Ogre
 
 
 def attach(scene, name: str, vertices, normals, indices, material_name: str,
-           uvs=None):
+           uvs=None, colors=None):
     """Create a ManualObject and attach it to the scene root.
 
     ``uvs`` is an optional (N, 2) float32 array of texture coordinates.
+    ``colors`` is an optional (N, 4) float32 array of RGBA vertex colours,
+    used by shaders that accept per-vertex tint (e.g. buildings).
     Returns the SceneNode, or None if geometry is empty.
     """
     if vertices is None or len(vertices) == 0 or len(indices) == 0:
@@ -27,10 +29,18 @@ def attach(scene, name: str, vertices, normals, indices, material_name: str,
         uv_arr = np.asarray(uvs, dtype=np.float32)
         if uv_arr.shape[0] != verts.shape[0]:
             raise ValueError(f"{name}: uv count {uv_arr.shape[0]} != vertex count {verts.shape[0]}")
+    have_col = colors is not None
+    if have_col:
+        col_arr = np.asarray(colors, dtype=np.float32)
+        if col_arr.shape[0] != verts.shape[0]:
+            raise ValueError(f"{name}: color count {col_arr.shape[0]} != vertex count {verts.shape[0]}")
 
     for i in range(len(verts)):
         mo.position(float(verts[i, 0]), float(verts[i, 1]), float(verts[i, 2]))
         mo.normal(float(norms[i, 0]), float(norms[i, 1]), float(norms[i, 2]))
+        if have_col:
+            mo.colour(float(col_arr[i, 0]), float(col_arr[i, 1]),
+                      float(col_arr[i, 2]), float(col_arr[i, 3]))
         if have_uv:
             mo.textureCoord(float(uv_arr[i, 0]), float(uv_arr[i, 1]))
     for i in range(0, len(idx), 3):

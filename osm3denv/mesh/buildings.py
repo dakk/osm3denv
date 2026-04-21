@@ -36,11 +36,35 @@ from osm3denv.mesh.sample import TerrainSampler
 
 log = logging.getLogger(__name__)
 
-NUM_VARIANTS = 5
+NUM_VARIANTS = 3
 
 _ROOF_SHAPES = ("flat", "pyramidal", "gabled", "hipped")
 _LEVEL_M = 3.0          # assumed storey height
 _ROOF_LEVEL_M = 2.5     # shorter than a full storey
+
+# Warm residential wall palette; every building draws one tint from this list
+# via way-id hash. The tint multiplies the sampled brick/plaster texture so
+# the underlying material still contributes grain but every building reads
+# as its own colour. Values are deliberately kept above 0.65 so the tinted
+# brick never goes muddy/dark.
+_WALL_PALETTE = [
+    (1.00, 0.97, 0.92),  # warm white
+    (1.05, 0.90, 0.72),  # ochre
+    (1.00, 0.78, 0.68),  # terracotta
+    (0.98, 0.94, 0.80),  # cream
+    (0.92, 0.85, 0.95),  # pale lavender
+    (0.82, 0.92, 0.98),  # pale sky blue
+    (1.00, 0.85, 0.78),  # peach
+    (0.96, 0.80, 0.70),  # rose
+    (0.88, 0.95, 0.85),  # pale sage
+    (1.00, 0.92, 0.66),  # mustard
+]
+
+
+def _wall_colour(way_id: int) -> tuple[float, float, float, float]:
+    """Pick a warm residential hue for this way, deterministically."""
+    r, g, b = _WALL_PALETTE[_stable_hash(way_id) % len(_WALL_PALETTE)]
+    return (r, g, b, 1.0)
 
 
 def _stable_hash(way_id: int) -> int:
@@ -112,6 +136,7 @@ class BuildingsMesh:
     normals: np.ndarray
     indices: np.ndarray
     uvs: np.ndarray
+    colors: np.ndarray       # (N, 4) RGBA per-building wall tint
     count: int
     # Stone "trim": the cornice band running under the roofline of every
     # building. Rendered with a neutral stone material so it doesn't inherit
@@ -633,7 +658,13 @@ def build(osm: OSMData, frame: Frame,
         roof_h = _roof_height(tags, wall_h, shape)
         cx, cy = poly.centroid.x, poly.centroid.y
         base_y = float(sampler.height_at(cx, cy))
-        return _extrude(poly, wall_h, roof_h, shape, base_y)
+        ext = _extrude(poly, wall_h, roof_h, shape, base_y)
+        if ext is None:
+            return None
+        v, n, u, i, tv, tn, tu, ti = ext
+        rgba = _wall_colour(way_id)
+        colors = np.tile(np.array(rgba, dtype=np.float32), (len(v), 1))
+        return v, n, u, i, colors, tv, tn, tu, ti
 
     for w in osm.filter_ways(lambda t: "building" in t or "building:part" in t):
         poly = polygon_from_way(w, frame)
@@ -653,13 +684,13 @@ def build(osm: OSMData, frame: Frame,
 
     out: list[BuildingsMesh] = []
     for variant, parts in buckets.items():
-        all_v = []; all_n = []; all_u = []; all_i = []
+        all_v = []; all_n = []; all_u = []; all_i = []; all_c = []
         all_tv = []; all_tn = []; all_tu = []; all_ti = []
         off = 0
         t_off = 0
         count = 0
-        for v, n, u, i, tv, tn, tu, ti in parts:
-            all_v.append(v); all_n.append(n); all_u.append(u)
+        for v, n, u, i, c, tv, tn, tu, ti in parts:
+            all_v.append(v); all_n.append(n); all_u.append(u); all_c.append(c)
             all_i.append(i + off)
             off += len(v)
             all_tv.append(tv); all_tn.append(tn); all_tu.append(tu)
@@ -672,6 +703,7 @@ def build(osm: OSMData, frame: Frame,
             normals=np.concatenate(all_n, axis=0),
             indices=np.concatenate(all_i, axis=0),
             uvs=np.concatenate(all_u, axis=0),
+            colors=np.concatenate(all_c, axis=0),
             count=count,
             trim_vertices=np.concatenate(all_tv, axis=0),
             trim_normals=np.concatenate(all_tn, axis=0),

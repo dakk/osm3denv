@@ -79,11 +79,9 @@ def buildings() -> str:
 # first variant whose packs are all cached; if none qualify, falls back to
 # the default full/partial/procedural chain used by buildings().
 _BUILDING_VARIANTS: list[tuple[str, str, str]] = [
-    ("brick",    "roof",  "osm3d/buildings_pbr_full"),
-    ("brick2",   "roof",  "osm3d/buildings_pbr_v1"),
-    ("brick3",   "roof2", "osm3d/buildings_pbr_v2"),
-    ("plaster1", "roof",  "osm3d/buildings_pbr_v3"),
-    ("plaster2", "roof2", "osm3d/buildings_pbr_v4"),
+    ("brick",  "roof",  "osm3d/buildings_pbr_full"),
+    ("brick2", "roof",  "osm3d/buildings_pbr_v1"),
+    ("brick3", "roof2", "osm3d/buildings_pbr_v2"),
 ]
 
 

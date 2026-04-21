@@ -24,6 +24,7 @@ uniform sampler2D roof_ao;
 in vec3 v_world_pos;
 in vec3 v_world_normal;
 in vec2 v_uv;
+in vec4 v_color;     // per-building palette tint
 
 out vec4 frag_color;
 
@@ -249,6 +250,10 @@ void main() {
         vec3 macro = texture(brick_albedo, uv * 0.13).rgb;
         float macro_lum = dot(macro, vec3(0.299, 0.587, 0.114));
         albedo *= mix(0.88, 1.12, macro_lum);
+
+        // Per-building palette tint applied to the sampled wall before
+        // windows are composited, so glass panes stay uncoloured.
+        albedo *= v_color.rgb;
 
         // Overlay procedural windows on the sampled brick.
         float glass;

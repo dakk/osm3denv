@@ -8,6 +8,7 @@ uniform vec3 camera_position;
 in vec3 v_world_pos;
 in vec3 v_world_normal;
 in vec2 v_uv;
+in vec4 v_color;     // per-building palette tint
 
 out vec4 frag_color;
 
@@ -220,6 +221,9 @@ void main() {
         base = brick_wall(v_uv);
         float glass;
         base = windows(v_uv, base, glass);
+        // Per-building palette tint — each building seeds a unique warm
+        // residential colour via vertex colour; glass panes stay unaffected.
+        base = mix(base * v_color.rgb, base, glass);
         // Brick matte (0.88) → glass glossy (0.12). Frames stay matte via glass=0.
         roughness = mix(0.88, 0.12, glass);
     }

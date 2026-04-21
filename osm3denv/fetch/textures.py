@@ -30,9 +30,6 @@ TEXTURE_PACKS: dict[str, str] = {
     "sand":    "Sand006_2K-PNG",
     "paved":   "PavingStones012_2K-PNG",   # residential / commercial / industrial
     "soil":    "Ground054_2K-PNG",         # farmland / dry earth
-    # Plaster/stucco for Mediterranean-style facades (ochre, cream).
-    "plaster1": "PaintedPlaster017_2K-PNG",
-    "plaster2": "PaintedPlaster003_2K-PNG",
 }
 
 _UA = "osm3denv/0.1 (+https://github.com/)"

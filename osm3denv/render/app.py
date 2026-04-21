@@ -196,7 +196,7 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
                 upload.attach(scn, f"buildings_v{b.variant}",
                               b.vertices, b.normals, b.indices,
                               materials.buildings_for_variant(b.variant),
-                              uvs=b.uvs)
+                              uvs=b.uvs, colors=b.colors)
                 # Stone cornice trim rendered with a neutral warm-stone
                 # material regardless of the building's wall pack.
                 if len(b.trim_indices) > 0:
