@@ -59,7 +59,7 @@ vec3 apply_aerial(vec3 lit, vec3 world_pos, vec3 cam_pos, vec3 sun_dir) {
     vec3 v = world_pos - cam_pos;
     float d = length(v);
     vec3 view_dir = v / max(d, 1e-4);
-    float aerial = (1.0 - exp(-max(d - 200.0, 0.0) * 0.00020)) * 0.70;
+    float aerial = (1.0 - exp(-max(d - 200.0, 0.0) * 0.00020)) * 0.50;
     return mix(lit, atmos_sky(view_dir, sun_dir), aerial);
 }
 
@@ -101,6 +101,11 @@ vec3 pbr_surface(vec3 albedo, vec3 N, vec3 V, vec3 L,
     vec3  F = pbr_F_schlick(vdh, F0);
 
     vec3 spec = (D * G * F) / max(4.0 * ndv * ndl, 1e-4);
+    // Rough dielectrics physically produce negligible specular peaks.
+    // Attenuate the direct term quadratically so grass/rock/sand don't
+    // flash a bright hotspot where N*H happens to align with the sun.
+    float _spec_fade = 1.0 - roughness;
+    spec *= _spec_fade * _spec_fade;
     vec3 kd = (vec3(1.0) - F) * (1.0 - metallic);
     vec3 diff = kd * albedo / PBR_PI;
     vec3 direct = (diff + spec) * ndl * sun_color;
@@ -109,7 +114,7 @@ vec3 pbr_surface(vec3 albedo, vec3 N, vec3 V, vec3 L,
     vec3 env_diff = atmos_sky(N, L) * albedo * (1.0 - metallic) * 0.35;
     vec3 env_spec = atmos_sky(normalize(R), L)
                   * pbr_F_schlick(ndv, F0)
-                  * (1.0 - roughness * 0.9) * 0.35;
+                  * max(0.0, 1.0 - roughness * 1.3) * 0.25;
     vec3 floor_amb = albedo * ambient_col * (1.0 - metallic) * 0.5;
 
     return direct + env_diff + env_spec + floor_amb;

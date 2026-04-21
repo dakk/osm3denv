@@ -123,7 +123,7 @@ vec3 apply_aerial(vec3 lit, vec3 world_pos, vec3 cam_pos, vec3 sun_dir) {
     vec3 v = world_pos - cam_pos;
     float d = length(v);
     vec3 view_dir = v / max(d, 1e-4);
-    float aerial = (1.0 - exp(-max(d - 200.0, 0.0) * 0.00020)) * 0.70;
+    float aerial = (1.0 - exp(-max(d - 200.0, 0.0) * 0.00020)) * 0.50;
     return mix(lit, atmos_sky(view_dir, sun_dir), aerial);
 }
 
@@ -165,6 +165,11 @@ vec3 pbr_surface(vec3 albedo, vec3 N, vec3 V, vec3 L,
     vec3  F = pbr_F_schlick(vdh, F0);
 
     vec3 spec = (D * G * F) / max(4.0 * ndv * ndl, 1e-4);
+    // Rough dielectrics physically produce negligible specular peaks.
+    // Attenuate the direct term quadratically so grass/rock/sand don't
+    // flash a bright hotspot where N*H happens to align with the sun.
+    float _spec_fade = 1.0 - roughness;
+    spec *= _spec_fade * _spec_fade;
     vec3 kd = (vec3(1.0) - F) * (1.0 - metallic);
     vec3 diff = kd * albedo / PBR_PI;
     vec3 direct = (diff + spec) * ndl * sun_color;
@@ -173,7 +178,7 @@ vec3 pbr_surface(vec3 albedo, vec3 N, vec3 V, vec3 L,
     vec3 env_diff = atmos_sky(N, L) * albedo * (1.0 - metallic) * 0.35;
     vec3 env_spec = atmos_sky(normalize(R), L)
                   * pbr_F_schlick(ndv, F0)
-                  * (1.0 - roughness * 0.9) * 0.35;
+                  * max(0.0, 1.0 - roughness * 1.3) * 0.25;
     vec3 floor_amb = albedo * ambient_col * (1.0 - metallic) * 0.5;
 
     return direct + env_diff + env_spec + floor_amb;
@@ -242,8 +247,8 @@ vec3 snow_color(vec2 p, float detail) {
     float drift = fbm(p * 0.6, 5);
     float sparkle = smoothstep(0.98, 1.0, hash21(floor(p * 40.0)))
                   * detail_filter(p, 40.0) * detail;
-    vec3 warm = vec3(1.00, 0.98, 0.96);
-    vec3 cool = vec3(0.78, 0.84, 0.92);
+    vec3 warm = vec3(0.92, 0.92, 0.90);
+    vec3 cool = vec3(0.70, 0.74, 0.82);
     vec3 c = mix(cool, warm, smoothstep(0.3, 0.7, drift));
     c += vec3(0.3) * sparkle;
     return c;
@@ -264,7 +269,7 @@ GrassSample sample_grass(vec2 uv_m) {
     GrassSample g;
     g.albedo    = texture(grass_albedo, uv).rgb;
     g.n_tangent = texture(grass_normal, uv).rgb * 2.0 - 1.0;
-    g.roughness = clamp(texture(grass_rough, uv).r, 0.10, 1.0);
+    g.roughness = mix(0.75, 1.0, texture(grass_rough, uv).r);
     g.ao        = texture(grass_ao, uv).r;
     // Low-frequency albedo warp so the 1 m tile doesn't stripe the lawn.
     vec3 macro = texture(grass_albedo, uv * 0.09).rgb;
@@ -308,7 +313,7 @@ void main() {
 #ifdef PBR_ROCK_SAND
     vec2 rock_uv = v_uv * 0.5;   // 2 m per tile
     vec3 rock_col = texture(rock_albedo, rock_uv).rgb;
-    float rock_rough = clamp(texture(rock_rough, rock_uv).r, 0.08, 1.0);
+    float rock_rough = mix(0.65, 1.0, texture(rock_rough, rock_uv).r);
     float rock_ao_v = texture(rock_ao, rock_uv).r;
     vec3 rock_n_tan = texture(rock_normal, rock_uv).rgb * 2.0 - 1.0;
     // Macro luminance warp so 2 m tiles don't obviously repeat on cliffs.
@@ -337,7 +342,7 @@ void main() {
 #ifdef PBR_ROCK_SAND
     vec2 sand_uv = v_uv * 0.5;
     vec3 sand_col = texture(sand_albedo, sand_uv).rgb;
-    float sand_rough = clamp(texture(sand_rough, sand_uv).r, 0.08, 1.0);
+    float sand_rough = mix(0.85, 1.0, texture(sand_rough, sand_uv).r);
     float sand_ao_v = texture(sand_ao, sand_uv).r;
     vec3 sand_n_tan = texture(sand_normal, sand_uv).rgb * 2.0 - 1.0;
     vec3 sand_macro = texture(sand_albedo, sand_uv * 0.10).rgb;
@@ -353,8 +358,8 @@ void main() {
 
     vec3 snow = snow_color(v_uv * 0.60, detail);
 
-    float w_snow  = smoothstep(0.0, 0.35, 1.0 - slope)
-                  * smoothstep(1400.0, 1900.0, altitude);
+    float w_snow  = smoothstep(0.0, 0.20, 1.0 - slope)
+                  * smoothstep(2400.0, 3200.0, altitude);
     float w_rock  = smoothstep(0.22, 0.55, slope) * (1.0 - w_snow);
     float w_sand  = (1.0 - w_rock - w_snow) * smoothstep(2.0, -6.0, altitude);
     float w_grass = max(0.0, 1.0 - w_rock - w_sand - w_snow);
@@ -391,7 +396,7 @@ void main() {
     float rough = g.roughness * w_grass
                 + rock_rough * w_rock
                 + sand_rough * w_sand
-                + 0.55 * w_snow;
+                + 0.80 * w_snow;
 #ifndef PBR_ROCK_SAND
     // PBR rock branch already bakes the wet-smooth tweak into rock_rough.
     float wet = 1.0 - smoothstep(-4.0, 6.0, altitude);

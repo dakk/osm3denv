@@ -93,7 +93,7 @@ vec3 apply_aerial(vec3 lit, vec3 world_pos, vec3 cam_pos, vec3 sun_dir) {
     vec3 v = world_pos - cam_pos;
     float d = length(v);
     vec3 view_dir = v / max(d, 1e-4);
-    float aerial = (1.0 - exp(-max(d - 200.0, 0.0) * 0.00020)) * 0.70;
+    float aerial = (1.0 - exp(-max(d - 200.0, 0.0) * 0.00020)) * 0.50;
     return mix(lit, atmos_sky(view_dir, sun_dir), aerial);
 }
 
@@ -135,6 +135,11 @@ vec3 pbr_surface(vec3 albedo, vec3 N, vec3 V, vec3 L,
     vec3  F = pbr_F_schlick(vdh, F0);
 
     vec3 spec = (D * G * F) / max(4.0 * ndv * ndl, 1e-4);
+    // Rough dielectrics physically produce negligible specular peaks.
+    // Attenuate the direct term quadratically so grass/rock/sand don't
+    // flash a bright hotspot where N*H happens to align with the sun.
+    float _spec_fade = 1.0 - roughness;
+    spec *= _spec_fade * _spec_fade;
     vec3 kd = (vec3(1.0) - F) * (1.0 - metallic);
     vec3 diff = kd * albedo / PBR_PI;
     vec3 direct = (diff + spec) * ndl * sun_color;
@@ -143,7 +148,7 @@ vec3 pbr_surface(vec3 albedo, vec3 N, vec3 V, vec3 L,
     vec3 env_diff = atmos_sky(N, L) * albedo * (1.0 - metallic) * 0.35;
     vec3 env_spec = atmos_sky(normalize(R), L)
                   * pbr_F_schlick(ndv, F0)
-                  * (1.0 - roughness * 0.9) * 0.35;
+                  * max(0.0, 1.0 - roughness * 1.3) * 0.25;
     vec3 floor_amb = albedo * ambient_col * (1.0 - metallic) * 0.5;
 
     return direct + env_diff + env_spec + floor_amb;
@@ -261,8 +266,8 @@ vec3 snow_color(vec2 p, float detail) {
     float sparkle_aa = detail_filter(p, 40.0);
     float sparkle = smoothstep(0.98, 1.0, hash21(floor(p * 40.0)))
                   * sparkle_aa * detail;
-    vec3 warm = vec3(1.00, 0.98, 0.96);
-    vec3 cool = vec3(0.78, 0.84, 0.92);
+    vec3 warm = vec3(0.92, 0.92, 0.90);
+    vec3 cool = vec3(0.70, 0.74, 0.82);
     vec3 c = mix(cool, warm, smoothstep(0.3, 0.7, drift));
     c += vec3(0.3) * sparkle;
     return c;
@@ -313,8 +318,8 @@ void main() {
 
     // Blend weights: snow on low-slope high altitude, rock on steep slopes,
     // sand near sea level, grass otherwise.
-    float w_snow  = smoothstep(0.0, 0.35, 1.0 - slope)
-                  * smoothstep(1400.0, 1900.0, altitude);
+    float w_snow  = smoothstep(0.0, 0.20, 1.0 - slope)
+                  * smoothstep(2400.0, 3200.0, altitude);
     float w_rock  = smoothstep(0.22, 0.55, slope) * (1.0 - w_snow);
     float w_sand  = (1.0 - w_rock - w_snow) * smoothstep(2.0, -6.0, altitude);
     float w_grass = max(0.0, 1.0 - w_rock - w_sand - w_snow);
@@ -339,7 +344,7 @@ void main() {
 
     // Per-material roughness.
     float rough = 0.92 * w_grass + 0.65 * w_rock
-                + 0.94 * w_sand  + 0.55 * w_snow;
+                + 0.94 * w_sand  + 0.80 * w_snow;
     // Wet rock near the water line reads smoother.
     float wet = 1.0 - smoothstep(-4.0, 6.0, altitude);
     rough = mix(rough, rough * 0.55, wet * w_rock);

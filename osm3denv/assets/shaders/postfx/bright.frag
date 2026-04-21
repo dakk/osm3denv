@@ -14,6 +14,6 @@ void main() {
     float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
     // Soft knee around lum = 1.0: below 0.9 contributes nothing, above 1.4
     // passes through fully. Adjust for more/less bloom.
-    float bright = smoothstep(0.9, 1.4, lum);
+    float bright = smoothstep(1.3, 2.2, lum);
     frag_color = vec4(c * bright, 1.0);
 }
