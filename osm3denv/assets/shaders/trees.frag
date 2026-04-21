@@ -58,6 +58,58 @@ vec3 apply_aerial(vec3 lit, vec3 world_pos, vec3 cam_pos, vec3 sun_dir) {
     return mix(lit, atmos_sky(view_dir, sun_dir), aerial);
 }
 
+// ---------- PBR (analytical Cook-Torrance + GGX) ---------------------------
+
+const float PBR_PI = 3.14159265;
+
+float pbr_D_ggx(float ndh, float alpha) {
+    float a2 = alpha * alpha;
+    float d = ndh * ndh * (a2 - 1.0) + 1.0;
+    return a2 / (PBR_PI * d * d);
+}
+
+float pbr_G1(float nv, float alpha) {
+    float k = (alpha + 1.0);
+    k = k * k * 0.125;
+    return nv / (nv * (1.0 - k) + k);
+}
+
+vec3 pbr_F_schlick(float cos_t, vec3 f0) {
+    float x = 1.0 - clamp(cos_t, 0.0, 1.0);
+    float x5 = x * x * x * x * x;
+    return f0 + (1.0 - f0) * x5;
+}
+
+vec3 pbr_surface(vec3 albedo, vec3 N, vec3 V, vec3 L,
+                 vec3 sun_color, vec3 ambient_col,
+                 float roughness, float metallic) {
+    vec3 H = normalize(V + L);
+    float ndl = max(dot(N, L), 0.0);
+    float ndv = max(dot(N, V), 0.0);
+    float ndh = max(dot(N, H), 0.0);
+    float vdh = max(dot(V, H), 0.0);
+    float alpha = roughness * roughness;
+    vec3 F0 = mix(vec3(0.04), albedo, metallic);
+
+    float D = pbr_D_ggx(ndh, alpha);
+    float G = pbr_G1(ndv, alpha) * pbr_G1(ndl, alpha);
+    vec3  F = pbr_F_schlick(vdh, F0);
+
+    vec3 spec = (D * G * F) / max(4.0 * ndv * ndl, 1e-4);
+    vec3 kd = (vec3(1.0) - F) * (1.0 - metallic);
+    vec3 diff = kd * albedo / PBR_PI;
+    vec3 direct = (diff + spec) * ndl * sun_color;
+
+    vec3 R = reflect(-V, N);
+    vec3 env_diff = atmos_sky(N, L) * albedo * (1.0 - metallic) * 0.35;
+    vec3 env_spec = atmos_sky(normalize(R), L)
+                  * pbr_F_schlick(ndv, F0)
+                  * (1.0 - roughness * 0.9) * 0.35;
+    vec3 floor_amb = albedo * ambient_col * (1.0 - metallic) * 0.5;
+
+    return direct + env_diff + env_spec + floor_amb;
+}
+
 vec3 trunk_color(float seed) {
     float j = hash11(seed * 17.0);
     vec3 dark  = vec3(0.25, 0.17, 0.10);
@@ -85,8 +137,12 @@ void main() {
 
     vec3 N = normalize(v_world_normal);
     vec3 sun_dir = normalize(-light_direction.xyz);
-    float diffuse = max(dot(N, sun_dir), 0.0);
-    vec3 lit = base * (ambient_colour.rgb + light_diffuse.rgb * diffuse);
+    vec3 V = normalize(camera_position - v_world_pos);
+    // Bark rougher than leaves; both fully dielectric.
+    float roughness = (v_uv.x < 0.20) ? 0.92 : 0.80;
+    vec3 lit = pbr_surface(base, N, V, sun_dir,
+                           light_diffuse.rgb, ambient_colour.rgb,
+                           roughness, 0.0);
     vec3 final = apply_aerial(lit, v_world_pos, camera_position, sun_dir);
     frag_color = vec4(final, 1.0);
 }
