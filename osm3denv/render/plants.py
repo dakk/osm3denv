@@ -27,6 +27,14 @@ class Plant:
     gltf_name: str           # original glTF node name, e.g. "Tree-01-1"
     kind: str                # "tree" or "bush"
     height: float
+    # Pivot offset: where the plant's base/centre sits in mesh-local space.
+    # The kit is authored as a showroom with each plant translated to a grid
+    # cell, so these are typically non-zero and differ per plant. At render
+    # time we subtract ``scale * pivot`` from the node position so the plant's
+    # base ends up at the desired world coords.
+    pivot_x: float
+    pivot_y: float           # base (min Y)
+    pivot_z: float
 
 
 @dataclass
@@ -130,7 +138,12 @@ def load_kit(gltf_path: Path,
                 pass
 
         aabb = clone.getBounds()
-        height = float(aabb.getMaximum().y - aabb.getMinimum().y)
+        minp = aabb.getMinimum()
+        maxp = aabb.getMaximum()
+        height = float(maxp.y - minp.y)
+        pivot_x = float((minp.x + maxp.x) * 0.5)
+        pivot_y = float(minp.y)                      # base at the mesh's floor
+        pivot_z = float((minp.z + maxp.z) * 0.5)
         lower = gltf_name.lower()
         if lower.startswith("tree"):
             kind = "tree"
@@ -139,13 +152,14 @@ def load_kit(gltf_path: Path,
         else:
             kind = "bush"
         plant = Plant(name=clone_name, gltf_name=gltf_name, kind=kind,
-                      height=height)
+                      height=height,
+                      pivot_x=pivot_x, pivot_y=pivot_y, pivot_z=pivot_z)
         if kind == "tree":
             kit.trees.append(plant)
         else:
             kit.bushes.append(plant)
-        log.debug("plant %02d %r h=%.2f → %s (submeshes=%s)",
-                  plant_idx, gltf_name, height, kind, keep_indices)
+        log.debug("plant %02d %r h=%.2f pivot=(%.2f, %.2f, %.2f) → %s",
+                  plant_idx, gltf_name, height, pivot_x, pivot_y, pivot_z, kind)
 
     log.info("plant kit classified: %d trees, %d bushes",
              kit.num_trees, kit.num_bushes)

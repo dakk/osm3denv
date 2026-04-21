@@ -225,16 +225,26 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
             broadleaves = trees
 
         root = scn.getRootSceneNode()
+        y_axis = Ogre.Vector3(0.0, 1.0, 0.0)
         for i, tp in enumerate(self._trees.placements):
             pool = conifers if tp.species == "conifer" else broadleaves
             plant = pool[(tp.seed & 0x7FFFFFFF) % len(pool)]
             scale = tp.height / max(plant.height, 0.1)
 
+            # The kit bakes a grid translation into each plant's vertex data
+            # (e.g. x≈9.4, z≈2.7). To make the plant's centroid-XZ and base-Y
+            # land at (east, base_y, -north) AFTER a yaw rotation, rotate the
+            # pivot by the yaw quaternion first, then subtract scale*rotated
+            # pivot from the target position.
+            quat = Ogre.Quaternion(Ogre.Radian(float(tp.yaw_rad)), y_axis)
+            rp = quat * Ogre.Vector3(plant.pivot_x, plant.pivot_y, plant.pivot_z)
+
             ent = scn.createEntity(f"tree_{i}", plant.name)
             node = root.createChildSceneNode()
-            # Ogre frame: east = +x, height = +y, north = -z.
-            node.setPosition(tp.east, tp.base_y, -tp.north)
-            node.yaw(Ogre.Radian(float(tp.yaw_rad)))
+            node.setPosition(tp.east - scale * rp.x,
+                             tp.base_y - scale * rp.y,
+                             -tp.north - scale * rp.z)
+            node.setOrientation(quat)
             node.setScale(scale, scale, scale)
             node.attachObject(ent)
 
