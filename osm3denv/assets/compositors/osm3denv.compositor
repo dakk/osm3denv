@@ -1,0 +1,64 @@
+// HDR + bloom + ACES tonemap post-processing pipeline.
+//
+// The main scene is rendered into a half-float RGBA target (``scene``) so
+// specular highlights and the sun disk retain values > 1.0. A separate pass
+// extracts bright regions (>1.0) into a quarter-res target, blurs it with two
+// separable gaussians, then the final ``render_output`` pass composites
+// scene + bloom and applies an ACES filmic tonemap to LDR for display.
+
+compositor osm3denv/postfx
+{
+    technique
+    {
+        texture scene      target_width        target_height        PF_FLOAT16_RGBA
+        texture bloom_hi   target_width_scaled 0.5 target_height_scaled 0.5 PF_FLOAT16_RGBA
+        texture bloom_ping target_width_scaled 0.25 target_height_scaled 0.25 PF_FLOAT16_RGBA
+        texture bloom_pong target_width_scaled 0.25 target_height_scaled 0.25 PF_FLOAT16_RGBA
+
+        target scene
+        {
+            input previous
+        }
+
+        target bloom_hi
+        {
+            input none
+            pass render_quad
+            {
+                material osm3denv/postfx/bright
+                input 0 scene
+            }
+        }
+
+        target bloom_ping
+        {
+            input none
+            pass render_quad
+            {
+                material osm3denv/postfx/blur_h
+                input 0 bloom_hi
+            }
+        }
+
+        target bloom_pong
+        {
+            input none
+            pass render_quad
+            {
+                material osm3denv/postfx/blur_v
+                input 0 bloom_ping
+            }
+        }
+
+        target_output
+        {
+            input none
+            pass render_quad
+            {
+                material osm3denv/postfx/composite
+                input 0 scene
+                input 1 bloom_pong
+            }
+        }
+    }
+}

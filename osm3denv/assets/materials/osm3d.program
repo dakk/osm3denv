@@ -209,6 +209,7 @@ fragment_program osm3d_sky_fs glsl
     default_params
     {
         param_named_auto light_direction light_direction 0
+        param_named_auto time time
     }
 }
 

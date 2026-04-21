@@ -37,7 +37,7 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
         # Inject our asset directories before Ogre loads resources.
         OB.ApplicationContext.locateResources(self)
         rgm = Ogre.ResourceGroupManager.getSingleton()
-        for sub in ("shaders", "materials"):
+        for sub in ("shaders", "shaders/postfx", "materials", "compositors"):
             p = _ASSETS_DIR / sub
             if p.is_dir():
                 rgm.addResourceLocation(str(p), "FileSystem",
@@ -105,6 +105,10 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
         # Background is a fallback; the sky dome covers the viewport every frame.
         vp.setBackgroundColour(Ogre.ColourValue(0.0, 0.0, 0.0))
 
+        # HDR + bloom + ACES tonemap compositor. Attaching the compositor to
+        # the viewport routes the scene through our post-fx chain.
+        self._enable_postfx(vp)
+
         self._build_scene(scn)
 
         sky_node = build_sky_dome(scn, cam_node)
@@ -118,6 +122,26 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
         self.addInputListener(self._camera)
         # Capture the mouse so rotation can sweep past screen edges.
         self.setWindowGrab(True)
+
+    def _enable_postfx(self, vp: "Ogre.Viewport") -> None:
+        cm = Ogre.CompositorManager.getSingleton()
+        inst = cm.addCompositor(vp, "osm3denv/postfx")
+        if inst is None:
+            log.warning("postfx compositor could not be added; check ogre.log")
+            return
+        cm.setCompositorEnabled(vp, "osm3denv/postfx", True)
+
+        # Feed the blur passes a texel_size matching their quarter-res RT so
+        # the sample offsets actually land one pixel apart.
+        w = max(1, int(self.getRenderWindow().getWidth()))
+        h = max(1, int(self.getRenderWindow().getHeight()))
+        step = Ogre.Vector2(1.0 / (w * 0.25), 1.0 / (h * 0.25))
+        for mat_name in ("osm3d/postfx/blur_h", "osm3d/postfx/blur_v"):
+            mat = Ogre.MaterialManager.getSingleton().getByName(mat_name)
+            if mat is None:
+                continue
+            params = mat.getTechnique(0).getPass(0).getFragmentProgramParameters()
+            params.setNamedConstant("texel_size", step)
 
     def _build_scene(self, scn):
         t = self._terrain
