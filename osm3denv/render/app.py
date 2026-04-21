@@ -197,6 +197,13 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
                               b.vertices, b.normals, b.indices,
                               materials.buildings_for_variant(b.variant),
                               uvs=b.uvs)
+                # Stone cornice trim rendered with a neutral warm-stone
+                # material regardless of the building's wall pack.
+                if len(b.trim_indices) > 0:
+                    upload.attach(scn, f"buildings_trim_v{b.variant}",
+                                  b.trim_vertices, b.trim_normals,
+                                  b.trim_indices, materials.building_trim(),
+                                  uvs=b.trim_uvs)
         if (self._trees is not None and self._trees.count > 0
                 and self._plants and self._plants.num_trees > 0):
             self._attach_trees(scn)

@@ -152,6 +152,7 @@ void main() {
     if      (area_class == 2) albedo *= vec3(1.02, 1.00, 0.95);   // residential, warm
     else if (area_class == 3) albedo *= vec3(0.96, 0.96, 0.98);   // commercial, cool
     else if (area_class == 4) albedo *= vec3(0.82, 0.82, 0.86);   // industrial, darker/cooler
+    else if (area_class == 8) albedo *= vec3(0.90, 0.88, 0.84);   // square, greyer stone
 
     // Break up obvious tiling with a low-frequency albedo warp.
     vec3 macro = texture(area_albedo, uv * 0.11).rgb;

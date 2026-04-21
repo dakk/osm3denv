@@ -371,6 +371,120 @@ material osm3d/buildings_pbr_v2
     } }
 }
 
+// Variant 3: ochre/warm plaster walls + terracotta tile roof (Mediterranean).
+material osm3d/buildings_pbr_v3
+{
+    technique { pass {
+        vertex_program_ref osm3d_terrain_vs { }
+        fragment_program_ref osm3d_buildings_pbr_full_fs { }
+        texture_unit brick_albedo
+        {
+            texture PaintedPlaster017_2K-PNG_Color.png
+            filtering trilinear
+            tex_address_mode wrap
+        }
+        texture_unit brick_normal
+        {
+            texture PaintedPlaster017_2K-PNG_NormalGL.png
+            filtering trilinear
+            tex_address_mode wrap
+        }
+        texture_unit brick_rough
+        {
+            texture PaintedPlaster017_2K-PNG_Roughness.png
+            filtering trilinear
+            tex_address_mode wrap
+        }
+        texture_unit brick_ao
+        {
+            texture PaintedPlaster017_2K-PNG_AmbientOcclusion.png
+            filtering trilinear
+            tex_address_mode wrap
+        }
+        texture_unit roof_albedo
+        {
+            texture RoofingTiles010_2K-PNG_Color.png
+            filtering trilinear
+            tex_address_mode wrap
+        }
+        texture_unit roof_normal
+        {
+            texture RoofingTiles010_2K-PNG_NormalGL.png
+            filtering trilinear
+            tex_address_mode wrap
+        }
+        texture_unit roof_rough
+        {
+            texture RoofingTiles010_2K-PNG_Roughness.png
+            filtering trilinear
+            tex_address_mode wrap
+        }
+        texture_unit roof_ao
+        {
+            texture RoofingTiles010_2K-PNG_AmbientOcclusion.png
+            filtering trilinear
+            tex_address_mode wrap
+        }
+    } }
+}
+
+// Variant 4: cream plaster walls + slate roof (northern Italian).
+material osm3d/buildings_pbr_v4
+{
+    technique { pass {
+        vertex_program_ref osm3d_terrain_vs { }
+        fragment_program_ref osm3d_buildings_pbr_full_fs { }
+        texture_unit brick_albedo
+        {
+            texture PaintedPlaster003_2K-PNG_Color.png
+            filtering trilinear
+            tex_address_mode wrap
+        }
+        texture_unit brick_normal
+        {
+            texture PaintedPlaster003_2K-PNG_NormalGL.png
+            filtering trilinear
+            tex_address_mode wrap
+        }
+        texture_unit brick_rough
+        {
+            texture PaintedPlaster003_2K-PNG_Roughness.png
+            filtering trilinear
+            tex_address_mode wrap
+        }
+        texture_unit brick_ao
+        {
+            texture PaintedPlaster003_2K-PNG_AmbientOcclusion.png
+            filtering trilinear
+            tex_address_mode wrap
+        }
+        texture_unit roof_albedo
+        {
+            texture RoofingTiles002_2K-PNG_Color.png
+            filtering trilinear
+            tex_address_mode wrap
+        }
+        texture_unit roof_normal
+        {
+            texture RoofingTiles002_2K-PNG_NormalGL.png
+            filtering trilinear
+            tex_address_mode wrap
+        }
+        texture_unit roof_rough
+        {
+            texture RoofingTiles002_2K-PNG_Roughness.png
+            filtering trilinear
+            tex_address_mode wrap
+        }
+        texture_unit roof_ao
+        {
+            texture RoofingTiles002_2K-PNG_AmbientOcclusion.png
+            filtering trilinear
+            tex_address_mode wrap
+        }
+    } }
+}
+
 material osm3d/roads
 {
     technique
@@ -895,6 +1009,52 @@ material osm3d/rock_pbr
             filtering trilinear
             tex_address_mode wrap
         }
+    } }
+}
+
+// Paved city square / pedestrian plaza / marketplace (area_class=8).
+// Reuses the PavingStones pack — the shader tints slightly cooler for
+// a stone-plaza look vs. residential/commercial pavement.
+material osm3d/paved_square_pbr
+{
+    technique { pass {
+        depth_bias 50 5
+        vertex_program_ref osm3d_terrain_vs { }
+        fragment_program_ref osm3d_area_pbr_fs { param_named area_class int 8 }
+        texture_unit area_albedo
+        {
+            texture PavingStones012_2K-PNG_Color.png
+            filtering trilinear
+            tex_address_mode wrap
+        }
+        texture_unit area_normal
+        {
+            texture PavingStones012_2K-PNG_NormalGL.png
+            filtering trilinear
+            tex_address_mode wrap
+        }
+        texture_unit area_rough
+        {
+            texture PavingStones012_2K-PNG_Roughness.png
+            filtering trilinear
+            tex_address_mode wrap
+        }
+        texture_unit area_ao
+        {
+            texture PavingStones012_2K-PNG_AmbientOcclusion.png
+            filtering trilinear
+            tex_address_mode wrap
+        }
+    } }
+}
+
+// Procedural-fallback square (no paving-stones pack cached).
+material osm3d/paved_square
+{
+    technique { pass {
+        depth_bias 50 5
+        vertex_program_ref osm3d_terrain_vs { }
+        fragment_program_ref osm3d_area_fs { param_named area_class int 8 }
     } }
 }
 

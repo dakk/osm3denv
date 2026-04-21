@@ -245,6 +245,7 @@ void main() {
     else if (area_class == 5) base = farmland_color(p * 0.40);
     else if (area_class == 6) base = sand_color(p * 0.40);
     else if (area_class == 7) base = rock_color(p * 0.35);
+    else if (area_class == 8) base = commercial_color(p * 0.25);  // plaza
     else                       base = vec3(0.7, 0.7, 0.7);
 
     vec3 N = normalize(v_world_normal);
@@ -256,6 +257,7 @@ void main() {
     if      (area_class == 3 || area_class == 4) roughness = 0.75;
     else if (area_class == 2)                    roughness = 0.82;
     else if (area_class == 7)                    roughness = 0.72;
+    else if (area_class == 8)                    roughness = 0.75;
     vec3 lit = pbr_surface(base, N, V, sun_dir,
                            light_diffuse.rgb, ambient_colour.rgb,
                            roughness, 0.0);

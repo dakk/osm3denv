@@ -36,7 +36,7 @@ from osm3denv.mesh.sample import TerrainSampler
 
 log = logging.getLogger(__name__)
 
-NUM_VARIANTS = 3
+NUM_VARIANTS = 5
 
 _ROOF_SHAPES = ("flat", "pyramidal", "gabled", "hipped")
 _LEVEL_M = 3.0          # assumed storey height
@@ -113,6 +113,13 @@ class BuildingsMesh:
     indices: np.ndarray
     uvs: np.ndarray
     count: int
+    # Stone "trim": the cornice band running under the roofline of every
+    # building. Rendered with a neutral stone material so it doesn't inherit
+    # brick/plaster from the wall shader's normal-based classification.
+    trim_vertices: np.ndarray
+    trim_normals: np.ndarray
+    trim_indices: np.ndarray
+    trim_uvs: np.ndarray
 
 
 # ---------------------------------------------------------------------------
@@ -538,17 +545,87 @@ def _extrude(poly: sg.Polygon, wall_h: float, roof_h: float,
         ei + extra_off,
     ], axis=0).astype(np.uint32)
 
-    return vertices, normals, uvs, indices
+    # --- Cornice band (trim geometry, separate material) ---------------
+    tv, tn, tu, ti = _build_cornice(outer, wall_top_y)
+    return vertices, normals, uvs, indices, tv, tn, tu, ti
+
+
+def _build_cornice(ring: np.ndarray, wall_top_y: float,
+                   projection: float = 0.22,
+                   height_up: float = 0.10,
+                   height_down: float = 0.08):
+    """Thin stone band running along the top of every wall edge.
+
+    Only the front, top and bottom faces are emitted (the back face is
+    concealed against the wall). Uses world-space XZ UVs so a future stone
+    material with a tiled texture reads cleanly.
+    """
+    tv: list[tuple[float, float, float]] = []
+    tn: list[tuple[float, float, float]] = []
+    tu: list[tuple[float, float]] = []
+    tf: list[tuple[int, int, int]] = []
+
+    m = len(ring)
+    for i in range(m):
+        a = ring[i]; b = ring[(i + 1) % m]
+        de = float(b[0] - a[0]); dn = float(b[1] - a[1])
+        L = (de * de + dn * dn) ** 0.5
+        if L < 1e-6:
+            continue
+        # Outward horizontal normal in Ogre space (matches wall code).
+        n_out = (dn / L, 0.0, de / L)
+
+        y_bot = wall_top_y - height_down
+        y_top = wall_top_y + height_up
+
+        a_inner_b = (float(a[0]), y_bot, float(-a[1]))
+        b_inner_b = (float(b[0]), y_bot, float(-b[1]))
+        a_inner_t = (float(a[0]), y_top, float(-a[1]))
+        b_inner_t = (float(b[0]), y_top, float(-b[1]))
+        a_outer_b = (a_inner_b[0] + projection * n_out[0], y_bot,
+                     a_inner_b[2] + projection * n_out[2])
+        b_outer_b = (b_inner_b[0] + projection * n_out[0], y_bot,
+                     b_inner_b[2] + projection * n_out[2])
+        a_outer_t = (a_inner_t[0] + projection * n_out[0], y_top,
+                     a_inner_t[2] + projection * n_out[2])
+        b_outer_t = (b_inner_t[0] + projection * n_out[0], y_top,
+                     b_inner_t[2] + projection * n_out[2])
+
+        def _add_quad(p0, p1, p2, p3, normal):
+            base = len(tv)
+            tv.extend([p0, p1, p2, p3])
+            tn.extend([normal] * 4)
+            # World-XZ planar UV in metres.
+            tu.extend([(p0[0], p0[2]), (p1[0], p1[2]),
+                       (p2[0], p2[2]), (p3[0], p3[2])])
+            tf.append((base, base + 1, base + 2))
+            tf.append((base, base + 2, base + 3))
+
+        # Top face
+        _add_quad(a_inner_t, b_inner_t, b_outer_t, a_outer_t, (0.0, 1.0, 0.0))
+        # Bottom face (opposite winding so normal points -Y)
+        _add_quad(a_inner_b, a_outer_b, b_outer_b, b_inner_b, (0.0, -1.0, 0.0))
+        # Front (outward) face
+        _add_quad(a_outer_b, a_outer_t, b_outer_t, b_outer_b, n_out)
+
+    if not tv:
+        return (np.zeros((0, 3), dtype=np.float32),
+                np.zeros((0, 3), dtype=np.float32),
+                np.zeros((0, 2), dtype=np.float32),
+                np.zeros((0,), dtype=np.uint32))
+    return (np.asarray(tv, dtype=np.float32),
+            np.asarray(tn, dtype=np.float32),
+            np.asarray(tu, dtype=np.float32),
+            np.asarray(tf, dtype=np.uint32).reshape(-1))
 
 
 def build(osm: OSMData, frame: Frame,
           sampler: TerrainSampler) -> list[BuildingsMesh]:
-    """Build one BuildingsMesh per variant bucket."""
-    buckets: dict[int, list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]] = {}
+    """Build one BuildingsMesh per variant bucket (main + cornice trim)."""
+    buckets: dict[int, list[tuple]] = {}
 
     def add(variant: int, tuple_):
-        v, n, u, i = tuple_
-        buckets.setdefault(variant, []).append((v, n, u, i))
+        buckets.setdefault(variant, []).append(tuple_)
 
     def _process(tags, way_id, poly):
         wall_h = resolve_height(tags, way_id)
@@ -577,12 +654,17 @@ def build(osm: OSMData, frame: Frame,
     out: list[BuildingsMesh] = []
     for variant, parts in buckets.items():
         all_v = []; all_n = []; all_u = []; all_i = []
+        all_tv = []; all_tn = []; all_tu = []; all_ti = []
         off = 0
+        t_off = 0
         count = 0
-        for v, n, u, i in parts:
+        for v, n, u, i, tv, tn, tu, ti in parts:
             all_v.append(v); all_n.append(n); all_u.append(u)
             all_i.append(i + off)
             off += len(v)
+            all_tv.append(tv); all_tn.append(tn); all_tu.append(tu)
+            all_ti.append(ti + t_off)
+            t_off += len(tv)
             count += 1
         out.append(BuildingsMesh(
             variant=variant,
@@ -591,5 +673,9 @@ def build(osm: OSMData, frame: Frame,
             indices=np.concatenate(all_i, axis=0),
             uvs=np.concatenate(all_u, axis=0),
             count=count,
+            trim_vertices=np.concatenate(all_tv, axis=0),
+            trim_normals=np.concatenate(all_tn, axis=0),
+            trim_indices=np.concatenate(all_ti, axis=0),
+            trim_uvs=np.concatenate(all_tu, axis=0),
         ))
     return out

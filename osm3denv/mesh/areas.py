@@ -21,12 +21,15 @@ from osm3denv.render import materials
 log = logging.getLogger(__name__)
 
 
-# Precedence: first matching entry wins, so leisure > natural > landuse.
+# Precedence: first matching entry wins, so place > leisure > natural > landuse.
 # (tag_key, value_set, material_factory, y_offset_m)
 AREA_CATEGORIES: list[tuple[str, set[str] | None, object, float]] = [
     # Offset is kept at 0 for all — areas follow the terrain surface exactly;
     # the per-material depth_bias in osm3d.material pulls them toward the
     # camera in depth space so they win over the terrain without floating.
+    ("place",   {"square"},          materials.paved_square, 0.0),
+    ("highway", {"pedestrian"},      materials.paved_square, 0.0),
+    ("amenity", {"marketplace"},     materials.paved_square, 0.0),
     ("leisure", {"park", "garden", "nature_reserve", "village_green",
                  "pitch", "playground", "recreation_ground", "common"},
                 materials.vegetation, 0.0),

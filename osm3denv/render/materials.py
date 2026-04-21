@@ -79,9 +79,11 @@ def buildings() -> str:
 # first variant whose packs are all cached; if none qualify, falls back to
 # the default full/partial/procedural chain used by buildings().
 _BUILDING_VARIANTS: list[tuple[str, str, str]] = [
-    ("brick",  "roof",  "osm3d/buildings_pbr_full"),
-    ("brick2", "roof",  "osm3d/buildings_pbr_v1"),
-    ("brick3", "roof2", "osm3d/buildings_pbr_v2"),
+    ("brick",    "roof",  "osm3d/buildings_pbr_full"),
+    ("brick2",   "roof",  "osm3d/buildings_pbr_v1"),
+    ("brick3",   "roof2", "osm3d/buildings_pbr_v2"),
+    ("plaster1", "roof",  "osm3d/buildings_pbr_v3"),
+    ("plaster2", "roof2", "osm3d/buildings_pbr_v4"),
 ]
 
 
@@ -185,6 +187,14 @@ def industrial() -> str:
                  depth_bias=(1.5, 1.0))
 
 
+def paved_square() -> str:
+    """City squares, pedestrian plazas, marketplaces — cobbled/flagged pave."""
+    if _pack_available("paved"):
+        return "osm3d/paved_square_pbr"
+    return _make("osm3d/paved_square", (0.55, 0.52, 0.48),
+                 depth_bias=(1.5, 1.0))
+
+
 def trees() -> str:
     return _make("osm3d/trees", (0.25, 0.50, 0.18),
                  specular=(0.05, 0.05, 0.05))
@@ -200,3 +210,9 @@ def furniture_wood() -> str:
     """Warm wood for benches."""
     return _make("osm3d/furniture_wood", (0.42, 0.27, 0.15),
                  specular=(0.05, 0.05, 0.05))
+
+
+def building_trim() -> str:
+    """Neutral warm-stone trim band rendered below the roof of every building."""
+    return _make("osm3d/building_trim", (0.82, 0.78, 0.70),
+                 specular=(0.06, 0.06, 0.06))

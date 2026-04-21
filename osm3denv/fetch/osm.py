@@ -79,6 +79,11 @@ def _build_query(bbox_ll: tuple[float, float, float, float]) -> str:
   relation["landuse"]({bb});
   way["leisure"]({bb});
   relation["leisure"]({bb});
+  way["place"="square"]({bb});
+  relation["place"="square"]({bb});
+  way["highway"="pedestrian"]["area"="yes"]({bb});
+  way["amenity"="marketplace"]({bb});
+  relation["amenity"="marketplace"]({bb});
   way["natural"~"^(wood|scrub|grassland|heath|bare_rock|sand|beach|scree)$"]({bb});
   relation["natural"~"^(wood|scrub|grassland|heath)$"]({bb});
   node["natural"="tree"]({bb});
