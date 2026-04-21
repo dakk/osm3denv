@@ -51,8 +51,25 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
 
         scn.setAmbientLight(Ogre.ColourValue(0.35, 0.35, 0.40))
 
+        # Directional shadow map for the sun. Modulative mode applies shadow
+        # darkening as a separate post pass, so it doesn't require changes to
+        # our custom surface shaders. FocusedShadowCameraSetup fits the shadow
+        # camera tightly to the view frustum for the best shadow resolution.
+        scn.setShadowTechnique(Ogre.SHADOWTYPE_TEXTURE_MODULATIVE)
+        scn.setShadowTextureCount(1)
+        scn.setShadowTextureSize(2048)
+        scn.setShadowTexturePixelFormat(Ogre.PF_DEPTH16)
+        scn.setShadowFarDistance(min(3000.0, 2.5 * float(self._terrain.radius_m)))
+        scn.setShadowColour(Ogre.ColourValue(0.45, 0.45, 0.52))
+        scn.setShadowDirectionalLightExtrusionDistance(10000.0)
+        # .create() on the concrete Ptr returns a ShadowCameraSetupPtr that
+        # setShadowCameraSetup accepts; passing a plain FocusedShadowCameraSetup
+        # fails SWIG's Ptr typecheck.
+        scn.setShadowCameraSetup(Ogre.FocusedShadowCameraSetupPtr().create())
+
         sun = scn.createLight("sun")
         sun.setType(Ogre.Light.LT_DIRECTIONAL)
+        sun.setCastShadows(True)
         sun_node = scn.getRootSceneNode().createChildSceneNode()
         sun_node.attachObject(sun)
         # Initial direction; SunController will overwrite it based on time of day.
