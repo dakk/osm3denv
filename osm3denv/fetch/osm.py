@@ -82,6 +82,8 @@ def _build_query(bbox_ll: tuple[float, float, float, float]) -> str:
   way["natural"~"^(wood|scrub|grassland|heath|bare_rock|sand|beach|scree)$"]({bb});
   relation["natural"~"^(wood|scrub|grassland|heath)$"]({bb});
   node["natural"="tree"]({bb});
+  node["highway"="street_lamp"]({bb});
+  node["amenity"="bench"]({bb});
 );
 out geom;
 """

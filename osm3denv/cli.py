@@ -102,6 +102,7 @@ def run(cfg: Config, frame) -> None:
 
     buildings_data = roads_data = water_data = None
     trees_data = None
+    furniture_meshes: list = []
     area_meshes: list = []
     if osm_data is not None:
         from osm3denv.mesh import areas as amesh
@@ -113,6 +114,9 @@ def run(cfg: Config, frame) -> None:
         trees_data = tmesh.build(osm_data, frame, terrain_data.sampler,
                                   radius_m=cfg.radius_m)
         log.info("trees: %d", trees_data.count)
+        from osm3denv.mesh import furniture as fmesh
+        furniture_meshes = fmesh.build(osm_data, frame, terrain_data.sampler,
+                                       radius_m=cfg.radius_m)
 
         if "buildings" in cfg.layers:
             from osm3denv.mesh import buildings as bmesh
@@ -142,6 +146,7 @@ def run(cfg: Config, frame) -> None:
     run_viewer(terrain=terrain_data, buildings=buildings_data,
                roads=roads_data, water=water_data,
                areas=area_meshes, trees=trees_data,
+               furniture=furniture_meshes,
                texture_root=texture_fetch.textures_root(cfg.cache_dir),
                plant_pack_root=mesh_fetch.pack_root(cfg.cache_dir,
                                                     "shapespark_plants"))

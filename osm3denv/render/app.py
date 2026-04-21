@@ -19,7 +19,7 @@ _ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 
 class ViewerApp(OB.ApplicationContext, OB.InputListener):
     def __init__(self, terrain, buildings, roads, water, areas, trees,
-                 *, texture_root: Path | None = None,
+                 *, furniture=None, texture_root: Path | None = None,
                  plant_pack_root: Path | None = None):
         OB.ApplicationContext.__init__(self, "osm3denv")
         OB.InputListener.__init__(self)
@@ -29,6 +29,7 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
         self._water = water
         self._areas = areas or []
         self._trees = trees
+        self._furniture = furniture or []
         self._texture_root = texture_root
         self._plant_pack_root = plant_pack_root
         self._plants = None  # populated in setup() once Ogre is initialised
@@ -199,6 +200,14 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
         if (self._trees is not None and self._trees.count > 0
                 and self._plants and self._plants.num_trees > 0):
             self._attach_trees(scn)
+        for fm in self._furniture:
+            if fm.count == 0:
+                continue
+            mat = (materials.furniture_metal() if fm.kind == "lamp"
+                   else materials.furniture_wood())
+            upload.attach(scn, f"furniture_{fm.kind}",
+                          fm.vertices, fm.normals, fm.indices, mat,
+                          uvs=fm.uvs)
 
     def _attach_trees(self, scn) -> None:
         """Spawn one Entity per tree placement from the Shapespark plants kit.
@@ -256,9 +265,11 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
 
 
 def run_viewer(*, terrain, buildings, roads, water, areas=None, trees=None,
+               furniture=None,
                texture_root: Path | None = None,
                plant_pack_root: Path | None = None) -> None:
     app = ViewerApp(terrain, buildings, roads, water, areas, trees,
+                    furniture=furniture,
                     texture_root=texture_root,
                     plant_pack_root=plant_pack_root)
     app.initApp()

@@ -188,3 +188,15 @@ def industrial() -> str:
 def trees() -> str:
     return _make("osm3d/trees", (0.25, 0.50, 0.18),
                  specular=(0.05, 0.05, 0.05))
+
+
+def furniture_metal() -> str:
+    """Dark brushed metal for lamp posts."""
+    return _make("osm3d/furniture_metal", (0.18, 0.18, 0.20),
+                 specular=(0.25, 0.25, 0.28))
+
+
+def furniture_wood() -> str:
+    """Warm wood for benches."""
+    return _make("osm3d/furniture_wood", (0.42, 0.27, 0.15),
+                 specular=(0.05, 0.05, 0.05))
