@@ -8,7 +8,7 @@ import Ogre
 import Ogre.Bites as OB
 import Ogre.RTShader
 
-from osm3denv.render import materials, upload
+from osm3denv.render import materials, plants as plants_mod, upload
 from osm3denv.render.camera import FreeCamera
 from osm3denv.render.sky import SkyFollower, SunController, build_sky_dome
 
@@ -19,7 +19,8 @@ _ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 
 class ViewerApp(OB.ApplicationContext, OB.InputListener):
     def __init__(self, terrain, buildings, roads, water, areas, trees,
-                 *, texture_root: Path | None = None):
+                 *, texture_root: Path | None = None,
+                 plant_pack_root: Path | None = None):
         OB.ApplicationContext.__init__(self, "osm3denv")
         OB.InputListener.__init__(self)
         self._terrain = terrain
@@ -29,6 +30,8 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
         self._areas = areas or []
         self._trees = trees
         self._texture_root = texture_root
+        self._plant_pack_root = plant_pack_root
+        self._plants = None  # populated in setup() once Ogre is initialised
         self._camera: FreeCamera | None = None
         # Let the materials factories know whether PBR textures are cached.
         materials.set_texture_root(texture_root)
@@ -52,6 +55,14 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
                     rgm.addResourceLocation(str(pack_dir), "FileSystem",
                                             Ogre.RGN_DEFAULT, False)
                     log.debug("resource location added: %s", pack_dir)
+        # 3D mesh packs (Shapespark plants kit). Register the pack root +
+        # every subdirectory so Assimp can find the glTF and its companion
+        # buffer/textures next to it.
+        if self._plant_pack_root is not None and self._plant_pack_root.is_dir():
+            for p in [self._plant_pack_root, *[d for d in self._plant_pack_root.rglob('*') if d.is_dir()]]:
+                rgm.addResourceLocation(str(p), "FileSystem",
+                                        Ogre.RGN_DEFAULT, False)
+                log.debug("resource location added: %s", p)
 
     # ApplicationContext.setup is called after initApp() creates the window + root.
     def setup(self):
@@ -108,6 +119,21 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
         # HDR + bloom + ACES tonemap compositor. Attaching the compositor to
         # the viewport routes the scene through our post-fx chain.
         self._enable_postfx(vp)
+
+        # Pre-load + slice the Shapespark plants kit so Entities created in
+        # _build_scene can reference per-plant meshes by name.
+        from osm3denv.fetch import meshes as _mesh_fetch
+        gltf_path = None
+        if self._plant_pack_root is not None:
+            # derive from fetch config so the path logic stays in one place
+            info = _mesh_fetch.MESH_PACKS["shapespark_plants"]
+            candidate = self._plant_pack_root / info["gltf"]
+            if candidate.is_file():
+                gltf_path = candidate
+        if gltf_path is not None:
+            self._plants = plants_mod.load_kit(gltf_path)
+        else:
+            self._plants = plants_mod.PlantKit()
 
         self._build_scene(scn)
 
@@ -170,10 +196,47 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
                               b.vertices, b.normals, b.indices,
                               materials.buildings_for_variant(b.variant),
                               uvs=b.uvs)
-        if self._trees is not None and self._trees.count > 0:
-            tr = self._trees
-            upload.attach(scn, "trees", tr.vertices, tr.normals, tr.indices,
-                          materials.trees(), uvs=tr.uvs)
+        if (self._trees is not None and self._trees.count > 0
+                and self._plants and self._plants.num_trees > 0):
+            self._attach_trees(scn)
+
+    def _attach_trees(self, scn) -> None:
+        """Spawn one Entity per tree placement from the Shapespark plants kit.
+
+        Species preference maps to a plant pick: conifer → plants with names
+        containing "pine"/"spruce" when available, otherwise round-robin.
+        Height is set by scaling the plant mesh vertically to match the
+        OSM ``height`` tag (or the scatter default).
+        """
+        trees = self._plants.trees
+        if not trees:
+            return
+        # Partition plants into conifer-looking and the rest based on glTF
+        # node-name heuristics (Shapespark names include species hints).
+        def _is_conifer(name: str) -> bool:
+            n = name.lower()
+            return any(k in n for k in ("pine", "spruce", "fir", "cedar",
+                                        "conifer"))
+        conifers = [p for p in trees if _is_conifer(p.gltf_name)]
+        broadleaves = [p for p in trees if not _is_conifer(p.gltf_name)]
+        if not conifers:
+            conifers = trees
+        if not broadleaves:
+            broadleaves = trees
+
+        root = scn.getRootSceneNode()
+        for i, tp in enumerate(self._trees.placements):
+            pool = conifers if tp.species == "conifer" else broadleaves
+            plant = pool[(tp.seed & 0x7FFFFFFF) % len(pool)]
+            scale = tp.height / max(plant.height, 0.1)
+
+            ent = scn.createEntity(f"tree_{i}", plant.name)
+            node = root.createChildSceneNode()
+            # Ogre frame: east = +x, height = +y, north = -z.
+            node.setPosition(tp.east, tp.base_y, -tp.north)
+            node.yaw(Ogre.Radian(float(tp.yaw_rad)))
+            node.setScale(scale, scale, scale)
+            node.attachObject(ent)
 
     def keyPressed(self, evt) -> bool:
         if evt.keysym.sym == OB.SDLK_ESCAPE:
@@ -183,9 +246,11 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
 
 
 def run_viewer(*, terrain, buildings, roads, water, areas=None, trees=None,
-               texture_root: Path | None = None) -> None:
+               texture_root: Path | None = None,
+               plant_pack_root: Path | None = None) -> None:
     app = ViewerApp(terrain, buildings, roads, water, areas, trees,
-                    texture_root=texture_root)
+                    texture_root=texture_root,
+                    plant_pack_root=plant_pack_root)
     app.initApp()
     try:
         app.getRoot().startRendering()

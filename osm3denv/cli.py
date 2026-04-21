@@ -68,11 +68,15 @@ def main(lat, lon, radius_m, grid, cache_dir, no_buildings, no_roads, no_water,
 def run(cfg: Config, frame) -> None:
     from osm3denv.fetch import srtm as srtm_fetch
     from osm3denv.fetch import textures as texture_fetch
+    from osm3denv.fetch import meshes as mesh_fetch
     from osm3denv.mesh import terrain as terrain_mesh
 
     # Best-effort PBR texture download up front. If this fails (offline, 404,
     # etc.) the shaders fall back to their procedural paths.
     texture_fetch.ensure_all(cfg.cache_dir)
+    # Shapespark low-poly plants kit (144 MB). If this fails we fall back to
+    # the procedural cone trees.
+    mesh_fetch.ensure_pack(cfg.cache_dir, "shapespark_plants")
 
     # OSM first so the sea mask (if any) can be applied to the terrain before meshing.
     # Areas + trees are always on, so we always need OSM data.
@@ -138,7 +142,9 @@ def run(cfg: Config, frame) -> None:
     run_viewer(terrain=terrain_data, buildings=buildings_data,
                roads=roads_data, water=water_data,
                areas=area_meshes, trees=trees_data,
-               texture_root=texture_fetch.textures_root(cfg.cache_dir))
+               texture_root=texture_fetch.textures_root(cfg.cache_dir),
+               plant_pack_root=mesh_fetch.pack_root(cfg.cache_dir,
+                                                    "shapespark_plants"))
 
 
 if __name__ == "__main__":
