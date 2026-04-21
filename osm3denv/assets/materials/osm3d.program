@@ -100,3 +100,26 @@ fragment_program osm3d_sky_fs glsl
         param_named_auto light_direction light_direction 0
     }
 }
+
+vertex_program osm3d_trees_vs glsl
+{
+    source trees.vert
+    default_params
+    {
+        param_named_auto world_view_proj_matrix worldviewproj_matrix
+        param_named_auto world_matrix world_matrix
+        param_named_auto time time
+    }
+}
+
+fragment_program osm3d_trees_fs glsl
+{
+    source trees.frag
+    default_params
+    {
+        param_named_auto ambient_colour ambient_light_colour
+        param_named_auto light_diffuse light_diffuse_colour 0
+        param_named_auto light_direction light_direction 0
+        param_named_auto camera_position camera_position
+    }
+}

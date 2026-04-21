@@ -127,9 +127,8 @@ material osm3d/trees
     {
         pass
         {
-            ambient 0.4 0.55 0.3 1
-            diffuse 0.30 0.55 0.22 1
-            specular 0.05 0.05 0.05 16
+            vertex_program_ref osm3d_trees_vs { }
+            fragment_program_ref osm3d_trees_fs { }
         }
     }
 }

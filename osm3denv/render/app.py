@@ -133,7 +133,7 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
         if self._trees is not None and self._trees.count > 0:
             tr = self._trees
             upload.attach(scn, "trees", tr.vertices, tr.normals, tr.indices,
-                          materials.trees())  # no UVs: flat-colour material
+                          materials.trees(), uvs=tr.uvs)
 
     def keyPressed(self, evt) -> bool:
         if evt.keysym.sym == OB.SDLK_ESCAPE:
