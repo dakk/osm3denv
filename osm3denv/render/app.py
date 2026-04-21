@@ -165,9 +165,11 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
             upload.attach(scn, "water", w.vertices, w.normals, w.indices,
                           materials.water(), uvs=w.uvs)
         if self._buildings is not None:
-            b = self._buildings
-            upload.attach(scn, "buildings", b.vertices, b.normals, b.indices,
-                          materials.buildings(), uvs=b.uvs)
+            for b in self._buildings:
+                upload.attach(scn, f"buildings_v{b.variant}",
+                              b.vertices, b.normals, b.indices,
+                              materials.buildings_for_variant(b.variant),
+                              uvs=b.uvs)
         if self._trees is not None and self._trees.count > 0:
             tr = self._trees
             upload.attach(scn, "trees", tr.vertices, tr.normals, tr.indices,

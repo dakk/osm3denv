@@ -113,11 +113,13 @@ def run(cfg: Config, frame) -> None:
         if "buildings" in cfg.layers:
             from osm3denv.mesh import buildings as bmesh
             buildings_data = bmesh.build(osm_data, frame, terrain_data.sampler)
-            log.info("buildings: %d", buildings_data.count)
+            log.info("buildings: %d (%d variants)",
+                     sum(b.count for b in buildings_data), len(buildings_data))
         if "roads" in cfg.layers:
             from osm3denv.mesh import roads as rmesh
             roads_data = rmesh.build(osm_data, frame, terrain_data.sampler)
-            log.info("roads: %d", roads_data.count)
+            log.info("roads: %d (%d kinds)",
+                     sum(r.count for r in roads_data), len(roads_data))
         if "water" in cfg.layers:
             from osm3denv.mesh import water as wmesh
             water_data = wmesh.build(

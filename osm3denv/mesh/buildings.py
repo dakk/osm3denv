@@ -1,4 +1,11 @@
-"""Extruded building meshes from OSM footprints."""
+"""Extruded building meshes from OSM footprints.
+
+Each OSM building is deterministically bucketed into one of ``NUM_VARIANTS``
+by its way id, so a city block gets a visible mix of brick/roof packs rather
+than every building wearing the exact same texture. When the OSM data doesn't
+specify ``height`` or ``building:levels`` we also jitter the fallback height
+by ±2 m using the way id, avoiding the uniform 6 m box look.
+"""
 from __future__ import annotations
 
 import logging
@@ -19,26 +26,39 @@ from osm3denv.mesh.sample import TerrainSampler
 
 log = logging.getLogger(__name__)
 
+NUM_VARIANTS = 3
 
-def resolve_height(tags: dict[str, str]) -> float:
+
+def _stable_hash(way_id: int) -> int:
+    """Stable 32-bit scramble so per-way choices are deterministic but spread."""
+    return (way_id * 2654435761) & 0xFFFFFFFF
+
+
+def resolve_height(tags: dict[str, str], way_id: int = 0) -> float:
     h = parse_height(tags.get("height"))
     if h is not None and h > 0:
         return h
     levels = parse_height(tags.get("building:levels"))
     if levels is not None and levels > 0:
         return levels * 3.0
-    return 6.0
+    # Fallback height with a way-id-keyed jitter so neighbouring untagged
+    # buildings don't all come out exactly 6 m tall.
+    jitter = (_stable_hash(way_id) & 0xFF) / 255.0    # 0..1
+    return 6.0 + (jitter - 0.5) * 4.0                 # 4..8 m
+
+
+def _variant_for(way_id: int) -> int:
+    return (_stable_hash(way_id) >> 8) % NUM_VARIANTS
 
 
 @dataclass
 class BuildingsMesh:
+    variant: int
     vertices: np.ndarray
     normals: np.ndarray
     indices: np.ndarray
     uvs: np.ndarray
     count: int
-
-
 
 
 def _extrude(poly: sg.Polygon, height_m: float, base_y: float):
@@ -70,11 +90,8 @@ def _extrude(poly: sg.Polygon, height_m: float, base_y: float):
     wall_uvs: list[tuple[float, float]] = []
     wall_idx: list[tuple[int, int, int]] = []
     base_offset = 2 * n
-    # Brick texture: 1 unit = 1 meter for both axes.
     WALL_TILE = 1.0
     for ring in rings:
-        # Normalize to CCW for wall generation: outward normal = right of edge,
-        # triangle winding (a_b, b_b, b_t, a_t) is CCW when viewed from outside.
         signed_area = 0.0
         m = len(ring)
         for i in range(m):
@@ -83,7 +100,7 @@ def _extrude(poly: sg.Polygon, height_m: float, base_y: float):
         if signed_area < 0:
             ring = ring[::-1]
         m = len(ring)
-        u_running = 0.0  # cumulative horizontal length along the ring
+        u_running = 0.0
         top_v = height_m / WALL_TILE
         for i in range(m):
             a = ring[i]
@@ -118,7 +135,6 @@ def _extrude(poly: sg.Polygon, height_m: float, base_y: float):
         wu = np.zeros((0, 2), dtype=np.float32)
         wi = np.zeros((0,), dtype=np.uint32)
 
-    # Roof/floor UVs: planar world-space, 1 meter per unit (material scales).
     ROOF_TILE = 1.0
     roof_uvs = np.stack([flat2d[:, 0] / ROOF_TILE,
                          flat2d[:, 1] / ROOF_TILE], axis=-1).astype(np.float32)
@@ -131,56 +147,53 @@ def _extrude(poly: sg.Polygon, height_m: float, base_y: float):
     return vertices, normals, uvs, indices
 
 
-def build(osm: OSMData, frame: Frame, sampler: TerrainSampler) -> BuildingsMesh:
-    all_v: list[np.ndarray] = []
-    all_n: list[np.ndarray] = []
-    all_u: list[np.ndarray] = []
-    all_i: list[np.ndarray] = []
-    index_offset = 0
-    count = 0
+def build(osm: OSMData, frame: Frame,
+          sampler: TerrainSampler) -> list[BuildingsMesh]:
+    """Build one BuildingsMesh per variant bucket."""
+    buckets: dict[int, list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]] = {}
 
-    def add(tuple_):
-        nonlocal index_offset, count
+    def add(variant: int, tuple_):
         v, n, u, i = tuple_
-        all_v.append(v)
-        all_n.append(n)
-        all_u.append(u)
-        all_i.append(i + index_offset)
-        index_offset += len(v)
-        count += 1
+        buckets.setdefault(variant, []).append((v, n, u, i))
 
     for w in osm.filter_ways(lambda t: "building" in t or "building:part" in t):
         poly = polygon_from_way(w, frame)
         if poly is None:
             continue
-        h = resolve_height(w.tags)
+        h = resolve_height(w.tags, w.id)
         cx, cy = poly.centroid.x, poly.centroid.y
         base_y = float(sampler.height_at(cx, cy))
         ext = _extrude(poly, h, base_y)
         if ext is not None:
-            add(ext)
+            add(_variant_for(w.id), ext)
 
     for r in osm.filter_relations(lambda t: "building" in t):
         poly = polygon_from_relation(r, frame)
         if poly is None:
             continue
-        h = resolve_height(r.tags)
+        h = resolve_height(r.tags, r.id)
         cx, cy = poly.centroid.x, poly.centroid.y
         base_y = float(sampler.height_at(cx, cy))
         ext = _extrude(poly, h, base_y)
         if ext is not None:
-            add(ext)
+            add(_variant_for(r.id), ext)
 
-    if not all_v:
-        empty = np.zeros((0, 3), dtype=np.float32)
-        empty_uv = np.zeros((0, 2), dtype=np.float32)
-        return BuildingsMesh(empty, empty, np.zeros((0,), dtype=np.uint32),
-                             empty_uv, 0)
-
-    return BuildingsMesh(
-        vertices=np.concatenate(all_v, axis=0),
-        normals=np.concatenate(all_n, axis=0),
-        indices=np.concatenate(all_i, axis=0),
-        uvs=np.concatenate(all_u, axis=0),
-        count=count,
-    )
+    out: list[BuildingsMesh] = []
+    for variant, parts in buckets.items():
+        all_v = []; all_n = []; all_u = []; all_i = []
+        off = 0
+        count = 0
+        for v, n, u, i in parts:
+            all_v.append(v); all_n.append(n); all_u.append(u)
+            all_i.append(i + off)
+            off += len(v)
+            count += 1
+        out.append(BuildingsMesh(
+            variant=variant,
+            vertices=np.concatenate(all_v, axis=0),
+            normals=np.concatenate(all_n, axis=0),
+            indices=np.concatenate(all_i, axis=0),
+            uvs=np.concatenate(all_u, axis=0),
+            count=count,
+        ))
+    return out

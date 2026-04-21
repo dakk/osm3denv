@@ -75,6 +75,31 @@ def buildings() -> str:
                  specular=(0.10, 0.10, 0.10))
 
 
+# Each variant is (brick_pack, roof_pack, material_name). Dispatch picks the
+# first variant whose packs are all cached; if none qualify, falls back to
+# the default full/partial/procedural chain used by buildings().
+_BUILDING_VARIANTS: list[tuple[str, str, str]] = [
+    ("brick",  "roof",  "osm3d/buildings_pbr_full"),
+    ("brick2", "roof",  "osm3d/buildings_pbr_v1"),
+    ("brick3", "roof2", "osm3d/buildings_pbr_v2"),
+]
+
+
+def buildings_for_variant(variant: int) -> str:
+    """Pick a building material for a deterministic per-way variant index.
+
+    If the variant's PBR packs aren't all cached, cascade through the other
+    variants, then fall back to :func:`buildings` so the scene is still
+    rendered (just with less diversity).
+    """
+    n = len(_BUILDING_VARIANTS)
+    for offset in range(n):
+        b, r, name = _BUILDING_VARIANTS[(variant + offset) % n]
+        if _pack_available(b) and _pack_available(r):
+            return name
+    return buildings()
+
+
 def roads() -> str:
     if _pack_available("asphalt"):
         return "osm3d/roads_pbr"

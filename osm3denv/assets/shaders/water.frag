@@ -160,15 +160,20 @@ void main() {
     float spec = pow(max(dot(N, H), 0.0), 96.0);
     vec3 glint = light_diffuse.rgb * spec * 2.5;
 
-    // Wave-crest foam: where the displacement crests high, splash it with
-    // white. Height ranges ~[-0.08, 0.08]; crest threshold tunes foam amount.
-    float foam = smoothstep(0.045, 0.075, height);
+    // Wave-crest foam: only the rare high + steep crests. The chop_mask
+    // modulated height field peaks around 0.16 in choppy patches, so we
+    // threshold near the top and additionally require a steep surface
+    // gradient (breaking crest) so foam stays sparse and directional.
+    vec2 grad = vec2(dhdx1 + dhdx2 * 0.6, dhdy1 + dhdy2 * 0.6);
+    float crest = smoothstep(0.11, 0.16, height);
+    float slope = smoothstep(0.15, 0.55, length(grad));
+    float foam = crest * slope * 0.55;
     vec3 foam_col = vec3(0.92, 0.94, 0.96);
 
     // Composite: mix body (refracted) and sky reflection by Fresnel,
     // add sun glint, then foam sits on top.
     vec3 lit = mix(body, sky_refl, F) + glint;
-    lit = mix(lit, foam_col, foam * 0.9);
+    lit = mix(lit, foam_col, foam);
 
     vec3 final = apply_aerial(lit, v_world_pos, camera_position, sun_dir);
     frag_color = vec4(final, 0.9);

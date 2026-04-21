@@ -25,7 +25,7 @@ compositor osm3denv/postfx
             input none
             pass render_quad
             {
-                material osm3denv/postfx/bright
+                material osm3d/postfx/bright
                 input 0 scene
             }
         }
@@ -35,7 +35,7 @@ compositor osm3denv/postfx
             input none
             pass render_quad
             {
-                material osm3denv/postfx/blur_h
+                material osm3d/postfx/blur_h
                 input 0 bloom_hi
             }
         }
@@ -45,7 +45,7 @@ compositor osm3denv/postfx
             input none
             pass render_quad
             {
-                material osm3denv/postfx/blur_v
+                material osm3d/postfx/blur_v
                 input 0 bloom_ping
             }
         }
@@ -55,7 +55,7 @@ compositor osm3denv/postfx
             input none
             pass render_quad
             {
-                material osm3denv/postfx/composite
+                material osm3d/postfx/composite
                 input 0 scene
                 input 1 bloom_pong
             }

@@ -21,9 +21,12 @@ log = logging.getLogger(__name__)
 TEXTURE_PACKS: dict[str, str] = {
     "asphalt": "Asphalt026A_2K-PNG",
     "brick":   "Bricks097_2K-PNG",
+    "brick2":  "Bricks075A_2K-PNG",        # weathered older brick
+    "brick3":  "Bricks031_2K-PNG",         # lighter cream brick
     "grass":   "Grass004_2K-PNG",
     "rock":    "Rock030_2K-PNG",
     "roof":    "RoofingTiles010_2K-PNG",
+    "roof2":   "RoofingTiles002_2K-PNG",   # darker slate-like tiles
     "sand":    "Sand006_2K-PNG",
     "paved":   "PavingStones012_2K-PNG",   # residential / commercial / industrial
     "soil":    "Ground054_2K-PNG",         # farmland / dry earth
