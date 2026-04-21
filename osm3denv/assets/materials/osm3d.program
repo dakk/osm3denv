@@ -22,6 +22,47 @@ fragment_program osm3d_terrain_fs glsl
     }
 }
 
+fragment_program osm3d_terrain_pbr_fs glsl
+{
+    source terrain_pbr.frag
+    default_params
+    {
+        param_named_auto ambient_colour ambient_light_colour
+        param_named_auto light_diffuse light_diffuse_colour 0
+        param_named_auto light_direction light_direction 0
+        param_named_auto camera_position camera_position
+        param_named grass_albedo int 0
+        param_named grass_normal int 1
+        param_named grass_rough int 2
+        param_named grass_ao int 3
+    }
+}
+
+fragment_program osm3d_terrain_pbr_full_fs glsl
+{
+    source terrain_pbr.frag
+    preprocessor_defines PBR_ROCK_SAND
+    default_params
+    {
+        param_named_auto ambient_colour ambient_light_colour
+        param_named_auto light_diffuse light_diffuse_colour 0
+        param_named_auto light_direction light_direction 0
+        param_named_auto camera_position camera_position
+        param_named grass_albedo int 0
+        param_named grass_normal int 1
+        param_named grass_rough int 2
+        param_named grass_ao int 3
+        param_named rock_albedo int 4
+        param_named rock_normal int 5
+        param_named rock_rough int 6
+        param_named rock_ao int 7
+        param_named sand_albedo int 8
+        param_named sand_normal int 9
+        param_named sand_rough int 10
+        param_named sand_ao int 11
+    }
+}
+
 fragment_program osm3d_buildings_fs glsl
 {
     source buildings.frag
@@ -34,6 +75,43 @@ fragment_program osm3d_buildings_fs glsl
     }
 }
 
+fragment_program osm3d_buildings_pbr_fs glsl
+{
+    source buildings_pbr.frag
+    default_params
+    {
+        param_named_auto ambient_colour ambient_light_colour
+        param_named_auto light_diffuse light_diffuse_colour 0
+        param_named_auto light_direction light_direction 0
+        param_named_auto camera_position camera_position
+        param_named brick_albedo int 0
+        param_named brick_normal int 1
+        param_named brick_rough int 2
+        param_named brick_ao int 3
+    }
+}
+
+fragment_program osm3d_buildings_pbr_full_fs glsl
+{
+    source buildings_pbr.frag
+    preprocessor_defines PBR_ROOF
+    default_params
+    {
+        param_named_auto ambient_colour ambient_light_colour
+        param_named_auto light_diffuse light_diffuse_colour 0
+        param_named_auto light_direction light_direction 0
+        param_named_auto camera_position camera_position
+        param_named brick_albedo int 0
+        param_named brick_normal int 1
+        param_named brick_rough int 2
+        param_named brick_ao int 3
+        param_named roof_albedo int 4
+        param_named roof_normal int 5
+        param_named roof_rough int 6
+        param_named roof_ao int 7
+    }
+}
+
 fragment_program osm3d_asphalt_fs glsl
 {
     source asphalt.frag
@@ -43,6 +121,22 @@ fragment_program osm3d_asphalt_fs glsl
         param_named_auto light_diffuse light_diffuse_colour 0
         param_named_auto light_direction light_direction 0
         param_named_auto camera_position camera_position
+    }
+}
+
+fragment_program osm3d_asphalt_pbr_fs glsl
+{
+    source asphalt_pbr.frag
+    default_params
+    {
+        param_named_auto ambient_colour ambient_light_colour
+        param_named_auto light_diffuse light_diffuse_colour 0
+        param_named_auto light_direction light_direction 0
+        param_named_auto camera_position camera_position
+        param_named albedo_map int 0
+        param_named normal_map int 1
+        param_named rough_map int 2
+        param_named ao_map int 3
     }
 }
 
@@ -80,6 +174,23 @@ fragment_program osm3d_area_fs glsl
         param_named_auto light_direction light_direction 0
         param_named_auto camera_position camera_position
         param_named area_class int 0
+    }
+}
+
+fragment_program osm3d_area_pbr_fs glsl
+{
+    source area_pbr.frag
+    default_params
+    {
+        param_named_auto ambient_colour ambient_light_colour
+        param_named_auto light_diffuse light_diffuse_colour 0
+        param_named_auto light_direction light_direction 0
+        param_named_auto camera_position camera_position
+        param_named area_class int 0
+        param_named area_albedo int 0
+        param_named area_normal int 1
+        param_named area_rough int 2
+        param_named area_ao int 3
     }
 }
 

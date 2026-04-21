@@ -18,7 +18,8 @@ _ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 
 
 class ViewerApp(OB.ApplicationContext, OB.InputListener):
-    def __init__(self, terrain, buildings, roads, water, areas, trees):
+    def __init__(self, terrain, buildings, roads, water, areas, trees,
+                 *, texture_root: Path | None = None):
         OB.ApplicationContext.__init__(self, "osm3denv")
         OB.InputListener.__init__(self)
         self._terrain = terrain
@@ -27,7 +28,10 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
         self._water = water
         self._areas = areas or []
         self._trees = trees
+        self._texture_root = texture_root
         self._camera: FreeCamera | None = None
+        # Let the materials factories know whether PBR textures are cached.
+        materials.set_texture_root(texture_root)
 
     def locateResources(self):
         # Inject our asset directories before Ogre loads resources.
@@ -39,6 +43,15 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
                 rgm.addResourceLocation(str(p), "FileSystem",
                                         Ogre.RGN_DEFAULT, True)
                 log.debug("resource location added: %s", p)
+        # PBR texture packs cached by osm3denv.fetch.textures. Add each pack
+        # subdirectory directly — Ogre's recursive lookup on the cache root
+        # doesn't surface files in subfolders for resource-by-name queries.
+        if self._texture_root is not None and self._texture_root.is_dir():
+            for pack_dir in sorted(self._texture_root.iterdir()):
+                if pack_dir.is_dir():
+                    rgm.addResourceLocation(str(pack_dir), "FileSystem",
+                                            Ogre.RGN_DEFAULT, False)
+                    log.debug("resource location added: %s", pack_dir)
 
     # ApplicationContext.setup is called after initApp() creates the window + root.
     def setup(self):
@@ -142,8 +155,10 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
         return False
 
 
-def run_viewer(*, terrain, buildings, roads, water, areas=None, trees=None) -> None:
-    app = ViewerApp(terrain, buildings, roads, water, areas, trees)
+def run_viewer(*, terrain, buildings, roads, water, areas=None, trees=None,
+               texture_root: Path | None = None) -> None:
+    app = ViewerApp(terrain, buildings, roads, water, areas, trees,
+                    texture_root=texture_root)
     app.initApp()
     try:
         app.getRoot().startRendering()

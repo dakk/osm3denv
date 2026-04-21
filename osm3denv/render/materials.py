@@ -1,7 +1,35 @@
 """Programmatic materials for each scene layer."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import Ogre
+
+from osm3denv.fetch.textures import TEXTURE_PACKS
+
+# Set once by the viewer at startup with the root of the cached texture packs
+# (e.g. ~/.cache/osm3denv/textures/). ``roads()`` and friends use this to
+# decide whether to return a PBR material or fall back to the procedural one.
+_TEXTURE_ROOT: Path | None = None
+
+
+def set_texture_root(root: Path | None) -> None:
+    global _TEXTURE_ROOT
+    _TEXTURE_ROOT = root
+
+
+def _pack_available(short_name: str) -> bool:
+    pack_id = TEXTURE_PACKS.get(short_name)
+    if _TEXTURE_ROOT is None or pack_id is None:
+        return False
+    d = _TEXTURE_ROOT / pack_id
+    if not d.is_dir():
+        return False
+    names = [p.name.lower() for p in d.iterdir()]
+    # Color + NormalGL + Roughness are the minimum we need.
+    return (any("color" in n for n in names)
+            and any("normalgl" in n for n in names)
+            and any("roughness" in n for n in names))
 
 
 def _make(name: str, diffuse: tuple[float, float, float],
@@ -31,15 +59,25 @@ def _make(name: str, diffuse: tuple[float, float, float],
 
 
 def terrain() -> str:
+    if all(_pack_available(p) for p in ("grass", "rock", "sand")):
+        return "osm3d/terrain_pbr_full"
+    if _pack_available("grass"):
+        return "osm3d/terrain_pbr"
     return _make("osm3d/terrain", (0.45, 0.55, 0.35))
 
 
 def buildings() -> str:
+    if _pack_available("brick") and _pack_available("roof"):
+        return "osm3d/buildings_pbr_full"
+    if _pack_available("brick"):
+        return "osm3d/buildings_pbr"
     return _make("osm3d/buildings", (0.80, 0.75, 0.65),
                  specular=(0.10, 0.10, 0.10))
 
 
 def roads() -> str:
+    if _pack_available("asphalt"):
+        return "osm3d/roads_pbr"
     return _make("osm3d/roads", (0.22, 0.22, 0.22),
                  depth_bias=(10.0, 5.0))
 
@@ -50,37 +88,51 @@ def water() -> str:
 
 
 def vegetation() -> str:
+    if _pack_available("grass"):
+        return "osm3d/vegetation_pbr"
     return _make("osm3d/vegetation", (0.35, 0.60, 0.25),
                  specular=(0.05, 0.05, 0.05),
                  depth_bias=(2.0, 1.0))
 
 
 def farmland() -> str:
+    if _pack_available("soil"):
+        return "osm3d/farmland_pbr"
     return _make("osm3d/farmland", (0.70, 0.58, 0.35),
                  depth_bias=(2.0, 1.0))
 
 
 def sand() -> str:
+    if _pack_available("sand"):
+        return "osm3d/sand_pbr"
     return _make("osm3d/sand", (0.86, 0.80, 0.55),
                  depth_bias=(2.0, 1.0))
 
 
 def rock() -> str:
+    if _pack_available("rock"):
+        return "osm3d/rock_pbr"
     return _make("osm3d/rock", (0.55, 0.52, 0.48),
                  depth_bias=(2.0, 1.0))
 
 
 def residential() -> str:
+    if _pack_available("paved"):
+        return "osm3d/residential_pbr"
     return _make("osm3d/residential", (0.75, 0.68, 0.55),
                  depth_bias=(1.5, 1.0))
 
 
 def commercial() -> str:
+    if _pack_available("paved"):
+        return "osm3d/commercial_pbr"
     return _make("osm3d/commercial", (0.78, 0.62, 0.45),
                  depth_bias=(1.5, 1.0))
 
 
 def industrial() -> str:
+    if _pack_available("paved"):
+        return "osm3d/industrial_pbr"
     return _make("osm3d/industrial", (0.50, 0.50, 0.50),
                  depth_bias=(1.5, 1.0))
 

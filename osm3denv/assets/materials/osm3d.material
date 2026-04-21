@@ -14,6 +14,126 @@ material osm3d/terrain
     }
 }
 
+material osm3d/terrain_pbr
+{
+    technique
+    {
+        pass
+        {
+            vertex_program_ref osm3d_terrain_vs { }
+            fragment_program_ref osm3d_terrain_pbr_fs { }
+            texture_unit grass_albedo
+            {
+                texture Grass004_2K-PNG_Color.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+            texture_unit grass_normal
+            {
+                texture Grass004_2K-PNG_NormalGL.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+            texture_unit grass_rough
+            {
+                texture Grass004_2K-PNG_Roughness.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+            texture_unit grass_ao
+            {
+                texture Grass004_2K-PNG_AmbientOcclusion.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+        }
+    }
+}
+
+material osm3d/terrain_pbr_full
+{
+    technique
+    {
+        pass
+        {
+            vertex_program_ref osm3d_terrain_vs { }
+            fragment_program_ref osm3d_terrain_pbr_full_fs { }
+            texture_unit grass_albedo
+            {
+                texture Grass004_2K-PNG_Color.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+            texture_unit grass_normal
+            {
+                texture Grass004_2K-PNG_NormalGL.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+            texture_unit grass_rough
+            {
+                texture Grass004_2K-PNG_Roughness.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+            texture_unit grass_ao
+            {
+                texture Grass004_2K-PNG_AmbientOcclusion.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+            texture_unit rock_albedo
+            {
+                texture Rock030_2K-PNG_Color.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+            texture_unit rock_normal
+            {
+                texture Rock030_2K-PNG_NormalGL.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+            texture_unit rock_rough
+            {
+                texture Rock030_2K-PNG_Roughness.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+            texture_unit rock_ao
+            {
+                texture Rock030_2K-PNG_AmbientOcclusion.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+            texture_unit sand_albedo
+            {
+                texture Sand006_2K-PNG_Color.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+            texture_unit sand_normal
+            {
+                texture Sand006_2K-PNG_NormalGL.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+            texture_unit sand_rough
+            {
+                texture Sand006_2K-PNG_Roughness.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+            texture_unit sand_ao
+            {
+                texture Sand006_2K-PNG_AmbientOcclusion.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+        }
+    }
+}
+
 material osm3d/water
 {
     technique
@@ -41,6 +161,102 @@ material osm3d/buildings
     }
 }
 
+material osm3d/buildings_pbr
+{
+    technique
+    {
+        pass
+        {
+            vertex_program_ref osm3d_terrain_vs { }
+            fragment_program_ref osm3d_buildings_pbr_fs { }
+            texture_unit brick_albedo
+            {
+                texture Bricks097_2K-PNG_Color.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+            texture_unit brick_normal
+            {
+                texture Bricks097_2K-PNG_NormalGL.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+            texture_unit brick_rough
+            {
+                texture Bricks097_2K-PNG_Roughness.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+            texture_unit brick_ao
+            {
+                texture Bricks097_2K-PNG_AmbientOcclusion.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+        }
+    }
+}
+
+material osm3d/buildings_pbr_full
+{
+    technique
+    {
+        pass
+        {
+            vertex_program_ref osm3d_terrain_vs { }
+            fragment_program_ref osm3d_buildings_pbr_full_fs { }
+            texture_unit brick_albedo
+            {
+                texture Bricks097_2K-PNG_Color.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+            texture_unit brick_normal
+            {
+                texture Bricks097_2K-PNG_NormalGL.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+            texture_unit brick_rough
+            {
+                texture Bricks097_2K-PNG_Roughness.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+            texture_unit brick_ao
+            {
+                texture Bricks097_2K-PNG_AmbientOcclusion.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+            texture_unit roof_albedo
+            {
+                texture RoofingTiles010_2K-PNG_Color.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+            texture_unit roof_normal
+            {
+                texture RoofingTiles010_2K-PNG_NormalGL.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+            texture_unit roof_rough
+            {
+                texture RoofingTiles010_2K-PNG_Roughness.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+            texture_unit roof_ao
+            {
+                texture RoofingTiles010_2K-PNG_AmbientOcclusion.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+        }
+    }
+}
+
 material osm3d/roads
 {
     technique
@@ -50,6 +266,47 @@ material osm3d/roads
             depth_bias 10 5
             vertex_program_ref osm3d_terrain_vs { }
             fragment_program_ref osm3d_asphalt_fs { }
+        }
+    }
+}
+
+// PBR variant of osm3d/roads. References files shipped inside the ambientCG
+// Asphalt026A 2K-PNG pack, which osm3denv.fetch.textures downloads to
+// ~/.cache/osm3denv/textures/Asphalt026A_2K-PNG/ before the viewer starts.
+// materials.roads() picks this material when those files are present.
+material osm3d/roads_pbr
+{
+    technique
+    {
+        pass
+        {
+            depth_bias 10 5
+            vertex_program_ref osm3d_terrain_vs { }
+            fragment_program_ref osm3d_asphalt_pbr_fs { }
+            texture_unit albedo
+            {
+                texture Asphalt026A_2K-PNG_Color.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+            texture_unit normal
+            {
+                texture Asphalt026A_2K-PNG_NormalGL.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+            texture_unit rough
+            {
+                texture Asphalt026A_2K-PNG_Roughness.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
+            texture_unit ao
+            {
+                texture Asphalt026A_2K-PNG_AmbientOcclusion.png
+                filtering trilinear
+                tex_address_mode wrap
+            }
         }
     }
 }
@@ -118,6 +375,129 @@ material osm3d/rock
         depth_bias 35 5
         vertex_program_ref osm3d_terrain_vs { }
         fragment_program_ref osm3d_area_fs { param_named area_class int 7 }
+    } }
+}
+
+// PBR variants. Each binds a class-appropriate ambientCG pack into the four
+// generic sampler slots of osm3d_area_pbr_fs. materials.py falls back to the
+// procedural variant above whenever the pack isn't cached on disk.
+
+material osm3d/vegetation_pbr
+{
+    technique { pass {
+        depth_bias 30 5
+        vertex_program_ref osm3d_terrain_vs { }
+        fragment_program_ref osm3d_area_pbr_fs { param_named area_class int 1 }
+        texture_unit area_albedo { texture Grass004_2K-PNG_Color.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit area_normal { texture Grass004_2K-PNG_NormalGL.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit area_rough  { texture Grass004_2K-PNG_Roughness.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit area_ao     { texture Grass004_2K-PNG_AmbientOcclusion.png
+            filtering trilinear tex_address_mode wrap }
+    } }
+}
+
+material osm3d/residential_pbr
+{
+    technique { pass {
+        depth_bias 40 5
+        vertex_program_ref osm3d_terrain_vs { }
+        fragment_program_ref osm3d_area_pbr_fs { param_named area_class int 2 }
+        texture_unit area_albedo { texture PavingStones012_2K-PNG_Color.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit area_normal { texture PavingStones012_2K-PNG_NormalGL.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit area_rough  { texture PavingStones012_2K-PNG_Roughness.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit area_ao     { texture PavingStones012_2K-PNG_AmbientOcclusion.png
+            filtering trilinear tex_address_mode wrap }
+    } }
+}
+
+material osm3d/commercial_pbr
+{
+    technique { pass {
+        depth_bias 45 5
+        vertex_program_ref osm3d_terrain_vs { }
+        fragment_program_ref osm3d_area_pbr_fs { param_named area_class int 3 }
+        texture_unit area_albedo { texture PavingStones012_2K-PNG_Color.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit area_normal { texture PavingStones012_2K-PNG_NormalGL.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit area_rough  { texture PavingStones012_2K-PNG_Roughness.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit area_ao     { texture PavingStones012_2K-PNG_AmbientOcclusion.png
+            filtering trilinear tex_address_mode wrap }
+    } }
+}
+
+material osm3d/industrial_pbr
+{
+    technique { pass {
+        depth_bias 45 5
+        vertex_program_ref osm3d_terrain_vs { }
+        fragment_program_ref osm3d_area_pbr_fs { param_named area_class int 4 }
+        texture_unit area_albedo { texture PavingStones012_2K-PNG_Color.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit area_normal { texture PavingStones012_2K-PNG_NormalGL.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit area_rough  { texture PavingStones012_2K-PNG_Roughness.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit area_ao     { texture PavingStones012_2K-PNG_AmbientOcclusion.png
+            filtering trilinear tex_address_mode wrap }
+    } }
+}
+
+material osm3d/farmland_pbr
+{
+    technique { pass {
+        depth_bias 35 5
+        vertex_program_ref osm3d_terrain_vs { }
+        fragment_program_ref osm3d_area_pbr_fs { param_named area_class int 5 }
+        texture_unit area_albedo { texture Ground054_2K-PNG_Color.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit area_normal { texture Ground054_2K-PNG_NormalGL.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit area_rough  { texture Ground054_2K-PNG_Roughness.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit area_ao     { texture Ground054_2K-PNG_AmbientOcclusion.png
+            filtering trilinear tex_address_mode wrap }
+    } }
+}
+
+material osm3d/sand_pbr
+{
+    technique { pass {
+        depth_bias 35 5
+        vertex_program_ref osm3d_terrain_vs { }
+        fragment_program_ref osm3d_area_pbr_fs { param_named area_class int 6 }
+        texture_unit area_albedo { texture Sand006_2K-PNG_Color.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit area_normal { texture Sand006_2K-PNG_NormalGL.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit area_rough  { texture Sand006_2K-PNG_Roughness.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit area_ao     { texture Sand006_2K-PNG_AmbientOcclusion.png
+            filtering trilinear tex_address_mode wrap }
+    } }
+}
+
+material osm3d/rock_pbr
+{
+    technique { pass {
+        depth_bias 35 5
+        vertex_program_ref osm3d_terrain_vs { }
+        fragment_program_ref osm3d_area_pbr_fs { param_named area_class int 7 }
+        texture_unit area_albedo { texture Rock030_2K-PNG_Color.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit area_normal { texture Rock030_2K-PNG_NormalGL.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit area_rough  { texture Rock030_2K-PNG_Roughness.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit area_ao     { texture Rock030_2K-PNG_AmbientOcclusion.png
+            filtering trilinear tex_address_mode wrap }
     } }
 }
 
