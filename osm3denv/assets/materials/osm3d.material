@@ -133,3 +133,21 @@ material osm3d/trees
         }
     }
 }
+
+// Sky dome. Drawn first (SKIES_EARLY), with depth writes off and culling
+// flipped so we see the inside of the inverted cube.
+material osm3d/sky
+{
+    technique
+    {
+        pass
+        {
+            lighting off
+            depth_write off
+            depth_check on
+            cull_hardware none
+            vertex_program_ref osm3d_sky_vs { }
+            fragment_program_ref osm3d_sky_fs { }
+        }
+    }
+}

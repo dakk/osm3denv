@@ -10,6 +10,7 @@ import Ogre.RTShader
 
 from osm3denv.render import materials, upload
 from osm3denv.render.camera import FreeCamera
+from osm3denv.render.sky import SkyFollower, SunController, build_sky_dome
 
 log = logging.getLogger(__name__)
 
@@ -49,16 +50,13 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
         Ogre.RTShader.ShaderGenerator.getSingleton().addSceneManager(scn)
 
         scn.setAmbientLight(Ogre.ColourValue(0.35, 0.35, 0.40))
-        # Fog disabled by default. To enable, call:
-        #   scn.setFog(Ogre.FOG_LINEAR, sky_color, 0.0, far*0.35, far*0.95)
 
         sun = scn.createLight("sun")
         sun.setType(Ogre.Light.LT_DIRECTIONAL)
-        sun.setDiffuseColour(Ogre.ColourValue(1.0, 0.95, 0.85))
-        sun.setSpecularColour(Ogre.ColourValue(0.3, 0.3, 0.3))
         sun_node = scn.getRootSceneNode().createChildSceneNode()
-        sun_node.setDirection(-0.4, -0.8, -0.4, Ogre.Node.TS_WORLD)
         sun_node.attachObject(sun)
+        # Initial direction; SunController will overwrite it based on time of day.
+        sun_node.setDirection(-0.4, -0.8, -0.4, Ogre.Node.TS_WORLD)
 
         cam = scn.createCamera("cam")
         cam.setNearClipDistance(1.0)
@@ -74,9 +72,17 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
         cam_node.lookAt(Ogre.Vector3(0.0, y0, -100.0), Ogre.Node.TS_WORLD)
 
         vp = self.getRenderWindow().addViewport(cam)
-        vp.setBackgroundColour(Ogre.ColourValue(0.6, 0.75, 0.90))
+        # Background is a fallback; the sky dome covers the viewport every frame.
+        vp.setBackgroundColour(Ogre.ColourValue(0.0, 0.0, 0.0))
 
         self._build_scene(scn)
+
+        sky_node = build_sky_dome(scn, cam_node)
+        self._sky_follower = SkyFollower(sky_node, cam_node)
+        self.addInputListener(self._sky_follower)
+
+        self._sun_controller = SunController(sun_node, sun, initial_hour=10.0)
+        self.addInputListener(self._sun_controller)
 
         self._camera = FreeCamera(node=cam_node, walk_speed=10.0)
         self.addInputListener(self._camera)

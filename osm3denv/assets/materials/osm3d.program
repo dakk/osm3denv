@@ -7,9 +7,6 @@ vertex_program osm3d_terrain_vs glsl
     {
         param_named_auto world_view_proj_matrix worldviewproj_matrix
         param_named_auto world_matrix world_matrix
-        param_named_auto camera_position camera_position
-        param_named fog_start float 1000000.0
-        param_named fog_end float 2000000.0
     }
 }
 
@@ -21,7 +18,7 @@ fragment_program osm3d_terrain_fs glsl
         param_named_auto ambient_colour ambient_light_colour
         param_named_auto light_diffuse light_diffuse_colour 0
         param_named_auto light_direction light_direction 0
-        param_named fog_colour float3 0.60 0.75 0.90
+        param_named_auto camera_position camera_position
     }
 }
 
@@ -33,7 +30,7 @@ fragment_program osm3d_buildings_fs glsl
         param_named_auto ambient_colour ambient_light_colour
         param_named_auto light_diffuse light_diffuse_colour 0
         param_named_auto light_direction light_direction 0
-        param_named fog_colour float3 0.60 0.75 0.90
+        param_named_auto camera_position camera_position
     }
 }
 
@@ -45,7 +42,7 @@ fragment_program osm3d_asphalt_fs glsl
         param_named_auto ambient_colour ambient_light_colour
         param_named_auto light_diffuse light_diffuse_colour 0
         param_named_auto light_direction light_direction 0
-        param_named fog_colour float3 0.60 0.75 0.90
+        param_named_auto camera_position camera_position
     }
 }
 
@@ -56,10 +53,7 @@ vertex_program osm3d_water_vs glsl
     {
         param_named_auto world_view_proj_matrix worldviewproj_matrix
         param_named_auto world_matrix world_matrix
-        param_named_auto camera_position camera_position
         param_named_auto time time
-        param_named fog_start float 1000000.0
-        param_named fog_end float 2000000.0
     }
 }
 
@@ -73,7 +67,6 @@ fragment_program osm3d_water_fs glsl
         param_named_auto light_direction light_direction 0
         param_named_auto camera_position camera_position
         param_named_auto time time
-        param_named fog_colour float3 0.60 0.75 0.90
     }
 }
 
@@ -85,7 +78,25 @@ fragment_program osm3d_area_fs glsl
         param_named_auto ambient_colour ambient_light_colour
         param_named_auto light_diffuse light_diffuse_colour 0
         param_named_auto light_direction light_direction 0
-        param_named fog_colour float3 0.60 0.75 0.90
+        param_named_auto camera_position camera_position
         param_named area_class int 0
+    }
+}
+
+vertex_program osm3d_sky_vs glsl
+{
+    source sky.vert
+    default_params
+    {
+        param_named_auto world_view_proj_matrix worldviewproj_matrix
+    }
+}
+
+fragment_program osm3d_sky_fs glsl
+{
+    source sky.frag
+    default_params
+    {
+        param_named_auto light_direction light_direction 0
     }
 }

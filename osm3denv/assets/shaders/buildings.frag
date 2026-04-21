@@ -3,12 +3,11 @@
 uniform vec4 ambient_colour;
 uniform vec4 light_diffuse;
 uniform vec4 light_direction;
-uniform vec3 fog_colour;
+uniform vec3 camera_position;
 
 in vec3 v_world_pos;
 in vec3 v_world_normal;
 in vec2 v_uv;
-in float v_fog_factor;
 
 out vec4 frag_color;
 
@@ -41,6 +40,43 @@ float fbm(vec2 p, int octaves) {
     return sum;
 }
 
+// ---------- Atmospheric scatter (shared with sky.frag) ---------------------
+
+vec3 atmos_sky(vec3 v, vec3 s) {
+    float h = v.y;
+    float sh = s.y;
+    float mu = clamp(dot(v, s), -1.0, 1.0);
+    vec3 zenith  = vec3(0.22, 0.48, 0.85);
+    vec3 horizon = vec3(0.75, 0.85, 0.92);
+    vec3 day_col = mix(horizon, zenith, smoothstep(0.0, 0.6, max(h, 0.0)));
+    float ang = acos(mu);
+    float halo = exp(-ang * 6.0);
+    vec3 halo_tint = vec3(1.00, 0.88, 0.65);
+    day_col = mix(day_col, day_col + halo_tint * 0.5, halo * 0.6);
+    float g = 0.82;
+    float phase_m = (1.0 - g*g) / pow(max(1.0 + g*g - 2.0*g*mu, 1e-4), 1.5);
+    day_col += halo_tint * phase_m * 0.005;
+    float sun_disk = smoothstep(0.9996, 0.9999, mu);
+    day_col = mix(day_col, vec3(1.40, 1.25, 1.00), sun_disk);
+    float dusk = smoothstep(0.25, -0.05, sh);
+    float near_h = 1.0 - smoothstep(0.0, 0.35, max(h, 0.0));
+    vec3 dusk_tint = vec3(1.10, 0.55, 0.25);
+    day_col = mix(day_col, dusk_tint, dusk * near_h * 0.75);
+    float day = smoothstep(-0.10, 0.20, sh);
+    vec3 night = vec3(0.02, 0.03, 0.06);
+    vec3 C = mix(night, day_col, day);
+    C *= smoothstep(-0.20, 0.0, h) * 0.55 + 0.45;
+    return C;
+}
+
+vec3 apply_aerial(vec3 lit, vec3 world_pos, vec3 cam_pos, vec3 sun_dir) {
+    vec3 v = world_pos - cam_pos;
+    float d = length(v);
+    vec3 view_dir = v / max(d, 1e-4);
+    float aerial = 1.0 - exp(-max(d - 100.0, 0.0) * 0.0004);
+    return mix(lit, atmos_sky(view_dir, sun_dir), aerial);
+}
+
 // Standard brick: ~25 cm wide, 7 cm tall, with half-offset alternating rows.
 vec3 brick_wall(vec2 uv) {
     vec2 brick = vec2(0.25, 0.07);
@@ -50,14 +86,13 @@ vec3 brick_wall(vec2 uv) {
     vec2 cell = floor(local / brick);
     vec2 f = fract(local / brick);
 
-    float mortar_frac = 0.10;  // mortar occupies ~10% of cell on each side
+    float mortar_frac = 0.10;
     float m = 1.0 -
         smoothstep(0.0, mortar_frac, f.x) *
         smoothstep(0.0, mortar_frac, 1.0 - f.x) *
         smoothstep(0.0, mortar_frac, f.y) *
         smoothstep(0.0, mortar_frac, 1.0 - f.y);
 
-    // Per-brick colour lottery.
     float seed = hash21(cell + row_offset);
     vec3 brick_cols[6] = vec3[](
         vec3(0.62, 0.24, 0.15),
@@ -69,7 +104,6 @@ vec3 brick_wall(vec2 uv) {
     );
     int pick = int(mod(floor(seed * 6.0), 6.0));
     vec3 bc = brick_cols[pick];
-    // Surface variation + vignette within the brick.
     bc *= 0.82 + 0.30 * fbm(uv * 40.0, 3);
     float edge = 1.0 - 0.35 * max(max(abs(f.x - 0.5) * 2.0, abs(f.y - 0.5) * 2.0), 0.0);
     bc *= edge;
@@ -78,21 +112,17 @@ vec3 brick_wall(vec2 uv) {
     return mix(bc, mortar_col, m);
 }
 
-// Overlay windows on the wall colour. Window "glass" is dark blue-grey.
 vec3 windows(vec2 uv, vec3 wall_col) {
-    vec2 spacing = vec2(1.6, 3.0);   // 1 window per ~1.6 m x 3 m (floor) cell
-    vec2 size = vec2(0.9, 1.4);      // 0.9 m x 1.4 m window opening
+    vec2 spacing = vec2(1.6, 3.0);
+    vec2 size = vec2(0.9, 1.4);
     vec2 cell = floor(uv / spacing);
     vec2 within = fract(uv / spacing) * spacing - (spacing - size) * 0.5;
-    // Skip windows on the ground floor (no window if cell.y == 0 — the row nearest the base).
-    float alive = step(0.5, cell.y);  // no windows on row 0; all upper rows have windows
+    float alive = step(0.5, cell.y);
     bvec2 inside = bvec2(within.x > 0.0 && within.x < size.x,
                           within.y > 0.0 && within.y < size.y);
     if (alive > 0.5 && inside.x && inside.y) {
-        // Glass pane with inner highlight variation per window.
         float ws = hash21(cell);
         vec3 glass = mix(vec3(0.16, 0.20, 0.28), vec3(0.30, 0.38, 0.48), ws);
-        // Frame: thin border just inside the opening.
         vec2 d_edge = min(within, size - within);
         float frame = 1.0 - smoothstep(0.0, 0.05, min(d_edge.x, d_edge.y));
         vec3 frame_col = vec3(0.15, 0.12, 0.10);
@@ -102,9 +132,8 @@ vec3 windows(vec2 uv, vec3 wall_col) {
 }
 
 vec3 roof_pattern(vec2 uv) {
-    // Terracotta tile rows: thin horizontal ridges + per-tile colour variation.
-    float row = uv.y / 0.30;  // 30 cm per tile row
-    float band = abs(fract(row) - 0.5) * 2.0;  // 0 at band centre, 1 at edges
+    float row = uv.y / 0.30;
+    float band = abs(fract(row) - 0.5) * 2.0;
     float shade = mix(0.55, 1.0, 1.0 - band);
     float col_jit = hash21(vec2(floor(uv.x / 0.22), floor(row)));
     vec3 tile_base = mix(vec3(0.58, 0.30, 0.20), vec3(0.76, 0.42, 0.25), col_jit);
@@ -121,14 +150,15 @@ void main() {
     if (up > 0.6) {
         base = roof_pattern(v_uv);
     } else if (up < -0.6) {
-        base = vec3(0.28, 0.26, 0.24);  // floor underside
+        base = vec3(0.28, 0.26, 0.24);
     } else {
         base = brick_wall(v_uv);
         base = windows(v_uv, base);
     }
 
-    float diffuse = max(dot(N, -normalize(light_direction.xyz)), 0.0);
+    vec3 sun_dir = normalize(-light_direction.xyz);
+    float diffuse = max(dot(N, sun_dir), 0.0);
     vec3 lit = base * (ambient_colour.rgb + light_diffuse.rgb * diffuse);
-    vec3 final = mix(fog_colour, lit, v_fog_factor);
+    vec3 final = apply_aerial(lit, v_world_pos, camera_position, sun_dir);
     frag_color = vec4(final, 1.0);
 }
