@@ -311,6 +311,97 @@ material osm3d/roads_pbr
     }
 }
 
+// Per-kind road materials. Each binds a surface pack into the four generic
+// sampler slots of osm3d_road_pbr_fs and picks a marking_mode:
+//   0 = none, 1 = dashed white centreline, 2 = double-yellow + lane dashes.
+
+material osm3d/roads/asphalt_major
+{
+    technique { pass {
+        depth_bias 10 5
+        vertex_program_ref osm3d_terrain_vs { }
+        fragment_program_ref osm3d_road_pbr_fs { param_named marking_mode int 2 }
+        texture_unit surface_albedo { texture Asphalt026A_2K-PNG_Color.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit surface_normal { texture Asphalt026A_2K-PNG_NormalGL.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit surface_rough  { texture Asphalt026A_2K-PNG_Roughness.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit surface_ao     { texture Asphalt026A_2K-PNG_AmbientOcclusion.png
+            filtering trilinear tex_address_mode wrap }
+    } }
+}
+
+material osm3d/roads/asphalt_minor
+{
+    technique { pass {
+        depth_bias 10 5
+        vertex_program_ref osm3d_terrain_vs { }
+        fragment_program_ref osm3d_road_pbr_fs { param_named marking_mode int 1 }
+        texture_unit surface_albedo { texture Asphalt026A_2K-PNG_Color.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit surface_normal { texture Asphalt026A_2K-PNG_NormalGL.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit surface_rough  { texture Asphalt026A_2K-PNG_Roughness.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit surface_ao     { texture Asphalt026A_2K-PNG_AmbientOcclusion.png
+            filtering trilinear tex_address_mode wrap }
+    } }
+}
+
+material osm3d/roads/paved
+{
+    technique { pass {
+        depth_bias 10 5
+        vertex_program_ref osm3d_terrain_vs { }
+        fragment_program_ref osm3d_road_pbr_fs { param_named marking_mode int 0 }
+        texture_unit surface_albedo { texture PavingStones012_2K-PNG_Color.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit surface_normal { texture PavingStones012_2K-PNG_NormalGL.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit surface_rough  { texture PavingStones012_2K-PNG_Roughness.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit surface_ao     { texture PavingStones012_2K-PNG_AmbientOcclusion.png
+            filtering trilinear tex_address_mode wrap }
+    } }
+}
+
+material osm3d/roads/dirt
+{
+    technique { pass {
+        depth_bias 10 5
+        vertex_program_ref osm3d_terrain_vs { }
+        fragment_program_ref osm3d_road_pbr_fs { param_named marking_mode int 0 }
+        texture_unit surface_albedo { texture Ground054_2K-PNG_Color.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit surface_normal { texture Ground054_2K-PNG_NormalGL.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit surface_rough  { texture Ground054_2K-PNG_Roughness.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit surface_ao     { texture Ground054_2K-PNG_AmbientOcclusion.png
+            filtering trilinear tex_address_mode wrap }
+    } }
+}
+
+// Railway: gravel-looking for now (reuse the rock pack). Rail tracks
+// themselves would need separate geometry — left as a future pass.
+material osm3d/roads/rail
+{
+    technique { pass {
+        depth_bias 10 5
+        vertex_program_ref osm3d_terrain_vs { }
+        fragment_program_ref osm3d_road_pbr_fs { param_named marking_mode int 0 }
+        texture_unit surface_albedo { texture Rock030_2K-PNG_Color.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit surface_normal { texture Rock030_2K-PNG_NormalGL.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit surface_rough  { texture Rock030_2K-PNG_Roughness.png
+            filtering trilinear tex_address_mode wrap }
+        texture_unit surface_ao     { texture Rock030_2K-PNG_AmbientOcclusion.png
+            filtering trilinear tex_address_mode wrap }
+    } }
+}
+
 // Area materials: one shared shader (osm3d_area_fs) with a per-material
 // ``area_class`` uniform picking the procedural pattern. Depth_bias is layered
 // so overlapping areas pick the more specific class.

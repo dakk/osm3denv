@@ -156,9 +156,10 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
                           am.vertices, am.normals, am.indices, mat_name,
                           uvs=am.uvs)
         if self._roads is not None:
-            r = self._roads
-            upload.attach(scn, "roads", r.vertices, r.normals, r.indices,
-                          materials.roads(), uvs=r.uvs)
+            for r in self._roads:
+                upload.attach(scn, f"roads_{r.kind}", r.vertices, r.normals,
+                              r.indices, materials.roads_for_kind(r.kind),
+                              uvs=r.uvs)
         if self._water is not None:
             w = self._water
             upload.attach(scn, "water", w.vertices, w.normals, w.indices,

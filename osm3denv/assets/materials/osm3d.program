@@ -140,6 +140,23 @@ fragment_program osm3d_asphalt_pbr_fs glsl
     }
 }
 
+fragment_program osm3d_road_pbr_fs glsl
+{
+    source road_pbr.frag
+    default_params
+    {
+        param_named_auto ambient_colour ambient_light_colour
+        param_named_auto light_diffuse light_diffuse_colour 0
+        param_named_auto light_direction light_direction 0
+        param_named_auto camera_position camera_position
+        param_named surface_albedo int 0
+        param_named surface_normal int 1
+        param_named surface_rough int 2
+        param_named surface_ao int 3
+        param_named marking_mode int 0
+    }
+}
+
 vertex_program osm3d_water_vs glsl
 {
     source water.vert

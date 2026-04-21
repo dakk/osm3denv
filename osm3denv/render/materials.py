@@ -82,6 +82,29 @@ def roads() -> str:
                  depth_bias=(10.0, 5.0))
 
 
+def roads_for_kind(kind: str) -> str:
+    """Pick the road material for an OSM way classification.
+
+    ``kind`` is one of the values produced by mesh.roads._classify:
+    asphalt_major, asphalt_minor, paved, dirt, rail. Falls back to the
+    procedural ``osm3d/roads`` material if the required PBR pack isn't cached.
+    """
+    pack_for_kind = {
+        "asphalt_major": "asphalt",
+        "asphalt_minor": "asphalt",
+        "paved":         "paved",
+        "dirt":          "soil",
+        "rail":          "rock",
+    }
+    pack = pack_for_kind.get(kind, "asphalt")
+    if _pack_available(pack):
+        return f"osm3d/roads/{kind}"
+    # Fallback: use the legacy procedural road material for any kind we can't
+    # texture right now (keeps dirt paths, rail etc. visible instead of black).
+    return _make("osm3d/roads", (0.22, 0.22, 0.22),
+                 depth_bias=(10.0, 5.0))
+
+
 def water() -> str:
     return _make("osm3d/water", (0.20, 0.35, 0.55), alpha=0.85,
                  depth_bias=(1.0, 1.0))
