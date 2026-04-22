@@ -89,6 +89,12 @@ def _build_query(bbox_ll: tuple[float, float, float, float]) -> str:
   node["natural"="tree"]({bb});
   node["highway"="street_lamp"]({bb});
   node["amenity"="bench"]({bb});
+  way["amenity"="fountain"]({bb});
+  relation["amenity"="fountain"]({bb});
+  node["amenity"="fountain"]({bb});
+  way["man_made"~"^(obelisk|column)$"]({bb});
+  node["man_made"~"^(obelisk|column)$"]({bb});
+  node["highway"="crossing"]({bb});
 );
 out geom;
 """

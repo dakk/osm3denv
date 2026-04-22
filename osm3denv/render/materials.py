@@ -215,3 +215,26 @@ def building_trim() -> str:
     """Neutral warm-stone trim band rendered below the roof of every building."""
     return _make("osm3d/building_trim", (0.82, 0.78, 0.70),
                  specular=(0.06, 0.06, 0.06))
+
+
+def fountain_stone() -> str:
+    """Warm-grey travertine for fountain basins."""
+    return _make("osm3d/fountain_stone", (0.78, 0.74, 0.66),
+                 specular=(0.08, 0.08, 0.08))
+
+
+def monument_stone() -> str:
+    """Weathered pale stone for obelisks and columns."""
+    return _make("osm3d/monument_stone", (0.80, 0.76, 0.68),
+                 specular=(0.05, 0.05, 0.05))
+
+
+def crossing_paint() -> str:
+    """Bright-white road-marking paint for zebra crossings.
+
+    The heavy depth_bias (constant, slope) pushes the quads past the tarmac in
+    the depth test without needing a custom shader.
+    """
+    return _make("osm3d/crossing_paint", (0.95, 0.95, 0.93),
+                 specular=(0.10, 0.10, 0.10),
+                 depth_bias=(20.0, 8.0))

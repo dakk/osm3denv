@@ -805,7 +805,12 @@ def build(osm: OSMData, frame: Frame,
         base_y = float(sampler.height_at(cx, cy))
         return _extrude(poly, wall_h, roof_h, shape, base_y, way_id)
 
-    for w in osm.filter_ways(lambda t: "building" in t or "building:part" in t):
+    def _is_monument(tags):
+        # Rendered separately as a tapered prism / cylinder by mesh.monuments.
+        return tags.get("man_made") in ("obelisk", "column")
+
+    for w in osm.filter_ways(lambda t: ("building" in t or "building:part" in t)
+                             and not _is_monument(t)):
         poly = polygon_from_way(w, frame)
         if poly is None:
             continue
@@ -813,7 +818,7 @@ def build(osm: OSMData, frame: Frame,
         if ext is not None:
             add(_variant_for(w.id), ext)
 
-    for r in osm.filter_relations(lambda t: "building" in t):
+    for r in osm.filter_relations(lambda t: "building" in t and not _is_monument(t)):
         poly = polygon_from_relation(r, frame)
         if poly is None:
             continue

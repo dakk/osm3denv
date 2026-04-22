@@ -19,7 +19,8 @@ _ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 
 class ViewerApp(OB.ApplicationContext, OB.InputListener):
     def __init__(self, terrain, buildings, roads, water, areas, trees,
-                 *, furniture=None, texture_root: Path | None = None,
+                 *, furniture=None, fountains=None, monuments=None,
+                 crossings=None, texture_root: Path | None = None,
                  plant_pack_root: Path | None = None):
         OB.ApplicationContext.__init__(self, "osm3denv")
         OB.InputListener.__init__(self)
@@ -30,6 +31,9 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
         self._areas = areas or []
         self._trees = trees
         self._furniture = furniture or []
+        self._fountains = fountains
+        self._monuments = monuments
+        self._crossings = crossings
         self._texture_root = texture_root
         self._plant_pack_root = plant_pack_root
         self._plants = None  # populated in setup() once Ogre is initialised
@@ -215,6 +219,27 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
             upload.attach(scn, f"furniture_{fm.kind}",
                           fm.vertices, fm.normals, fm.indices, mat,
                           uvs=fm.uvs)
+        # Fountains = stone basin + water disc.
+        if self._fountains is not None and self._fountains.count > 0:
+            f = self._fountains
+            upload.attach(scn, "fountain_stone",
+                          f.stone_vertices, f.stone_normals,
+                          f.stone_indices, materials.fountain_stone(),
+                          uvs=f.stone_uvs)
+            upload.attach(scn, "fountain_water",
+                          f.water_vertices, f.water_normals,
+                          f.water_indices, materials.water(),
+                          uvs=f.water_uvs)
+        if self._monuments is not None and self._monuments.count > 0:
+            m = self._monuments
+            upload.attach(scn, "monuments",
+                          m.vertices, m.normals, m.indices,
+                          materials.monument_stone(), uvs=m.uvs)
+        if self._crossings is not None and self._crossings.count > 0:
+            c = self._crossings
+            upload.attach(scn, "crossings",
+                          c.vertices, c.normals, c.indices,
+                          materials.crossing_paint(), uvs=c.uvs)
 
     def _attach_trees(self, scn) -> None:
         """Spawn one Entity per tree placement from the Shapespark plants kit.
@@ -272,11 +297,14 @@ class ViewerApp(OB.ApplicationContext, OB.InputListener):
 
 
 def run_viewer(*, terrain, buildings, roads, water, areas=None, trees=None,
-               furniture=None,
+               furniture=None, fountains=None, monuments=None, crossings=None,
                texture_root: Path | None = None,
                plant_pack_root: Path | None = None) -> None:
     app = ViewerApp(terrain, buildings, roads, water, areas, trees,
                     furniture=furniture,
+                    fountains=fountains,
+                    monuments=monuments,
+                    crossings=crossings,
                     texture_root=texture_root,
                     plant_pack_root=plant_pack_root)
     app.initApp()

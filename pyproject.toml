@@ -6,6 +6,9 @@ build-backend = "setuptools.build_meta"
 name = "osm3denv"
 version = "0.1.0"
 description = "Render a 3D environment (terrain + buildings + roads + water) around any lat/lon using OSM and SRTM"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Davide Gessa" }]
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "ogre-python>=14.5,<15",

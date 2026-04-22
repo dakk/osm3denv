@@ -240,12 +240,16 @@ def build(osm: OSMData, frame: Frame, sampler: TerrainSampler,
         idx_offset += len(v)
         count += 1
 
-    for w in osm.filter_ways(lambda t: t.get("natural") == "water"):
+    # amenity=fountain is handled by mesh.fountains (basin + water disc); skip
+    # it here so we don't draw a flat water slab over its footprint too.
+    for w in osm.filter_ways(lambda t: t.get("natural") == "water"
+                             and t.get("amenity") != "fountain"):
         p = _polygon_from_way(w, frame)
         if p is not None:
             add(p, per_vertex=False)
 
-    for r in osm.filter_relations(lambda t: t.get("natural") == "water"):
+    for r in osm.filter_relations(lambda t: t.get("natural") == "water"
+                                  and t.get("amenity") != "fountain"):
         for p in _polygons_from_relation(r, frame):
             add(p, per_vertex=False)
 
