@@ -120,6 +120,7 @@ def roads_for_kind(kind: str) -> str:
         "paved":         "paved",
         "dirt":          "soil",
         "rail":          "rock",
+        "sidewalk":      "paved",
     }
     pack = pack_for_kind.get(kind, "asphalt")
     if _pack_available(pack):

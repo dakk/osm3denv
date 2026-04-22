@@ -11,13 +11,25 @@ import logging
 from dataclasses import dataclass
 
 import numpy as np
+import shapely.geometry as sg
 import shapely.vectorized as sv
+from shapely.ops import unary_union
+from shapely.prepared import prep
 
 from osm3denv.fetch.osm import OSMData
 from osm3denv.frame import Frame
 from osm3denv.mesh.geom import (parse_number, polygon_from_way,
                                 polygons_from_relation)
 from osm3denv.mesh.sample import TerrainSampler
+
+# Approximate road widths used to keep the roadside scatter off the tarmac.
+_ROADSIDE_WIDTHS = {
+    "motorway": 12.0, "trunk": 10.0, "primary": 8.0, "secondary": 6.5,
+    "tertiary": 5.5, "residential": 5.0, "unclassified": 5.0,
+    "service": 3.0, "living_street": 4.0, "pedestrian": 4.0,
+    "footway": 1.5, "path": 1.5, "cycleway": 2.0, "track": 3.0,
+}
+_ROADSIDE_SKIP = {"motorway", "motorway_link", "trunk", "trunk_link"}
 
 log = logging.getLogger(__name__)
 
@@ -172,4 +184,130 @@ def build(osm: OSMData, frame: Frame, sampler: TerrainSampler,
             log.info("trees: scattered %d synthetic trees inside park/wood polygons",
                      scatter_count)
 
+    # --- Pass 3: roadside trees. ---------------------------------------
+    # Sample each non-motorway road at 10 m intervals and drop a tree on
+    # either side past the sidewalk, skipping anything that lands inside
+    # a building footprint or another road polygon.
+    remaining = MAX_TREES - len(placements)
+    roadside_count = 0
+    if remaining > 0:
+        building_union = _building_union(osm, frame)
+        road_union = _road_union(osm, frame)
+        building_prep = prep(building_union) if building_union is not None else None
+        road_prep = prep(road_union) if road_union is not None else None
+        for way in osm.ways:
+            if remaining <= 0:
+                break
+            hw = way.tags.get("highway")
+            if hw is None or hw in _ROADSIDE_SKIP:
+                continue
+            if (way.tags.get("tunnel") == "yes"
+                    or way.tags.get("bridge") == "yes"):
+                continue
+            lon = np.asarray([p[0] for p in way.geometry], dtype=np.float64)
+            lat = np.asarray([p[1] for p in way.geometry], dtype=np.float64)
+            if len(lon) < 2:
+                continue
+            east, north = frame.to_enu(lon, lat)
+            coords = list(zip(east.tolist(), north.tolist()))
+            try:
+                line = sg.LineString(coords)
+            except Exception:  # noqa: BLE001
+                continue
+            if line.length < 15.0:
+                continue
+            width = _ROADSIDE_WIDTHS.get(hw, 4.0)
+            lat_off = width * 0.5 + 3.0   # past kerb+sidewalk
+            step = 10.0
+            d = step
+            while d < line.length and remaining > 0:
+                pt = line.interpolate(d)
+                a = line.interpolate(max(d - 1.0, 0.0))
+                b = line.interpolate(min(d + 1.0, line.length))
+                tx = b.x - a.x; ty = b.y - a.y
+                tl = (tx * tx + ty * ty) ** 0.5
+                if tl < 1e-6:
+                    d += step
+                    continue
+                perp = (-ty / tl, tx / tl)
+                for sign in (+1.0, -1.0):
+                    x = pt.x + sign * lat_off * perp[0]
+                    y = pt.y + sign * lat_off * perp[1]
+                    if radius_m is not None and (abs(x) > radius_m
+                                                 or abs(y) > radius_m):
+                        continue
+                    candidate = sg.Point(x, y)
+                    if building_prep is not None and building_prep.intersects(candidate):
+                        continue
+                    if road_prep is not None and road_prep.intersects(candidate):
+                        continue
+                    node_id = ((way.id * 100003 + int(d) * 10
+                                + (1 if sign > 0 else 2)) & 0x7FFFFFFF)
+                    h = 5.5 + (node_id % 6)
+                    yaw = ((node_id * 2654435761) & 0xFFFF) / 0xFFFF * 2.0 * np.pi
+                    placements.append(TreePlacement(
+                        east=float(x), north=float(y),
+                        base_y=float(sampler.height_at(x, y)),
+                        height=float(h), yaw_rad=float(yaw),
+                        species=_species({}, node_id),
+                        seed=node_id,
+                    ))
+                    roadside_count += 1
+                    remaining -= 1
+                    if remaining <= 0:
+                        break
+                d += step
+        if roadside_count:
+            log.info("trees: %d roadside trees placed", roadside_count)
+
     return TreeRecords(placements=placements)
+
+
+def _building_union(osm: OSMData, frame: Frame):
+    polys = []
+    for w in osm.filter_ways(lambda t: "building" in t or "building:part" in t):
+        p = polygon_from_way(w, frame)
+        if p is not None:
+            polys.append(p)
+    for r in osm.filter_relations(lambda t: "building" in t):
+        for p in polygons_from_relation(r, frame):
+            polys.append(p)
+    if not polys:
+        return None
+    try:
+        return unary_union(polys).buffer(0.8)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _road_union(osm: OSMData, frame: Frame):
+    polys = []
+    for w in osm.ways:
+        hw = w.tags.get("highway")
+        if hw is None:
+            continue
+        if w.tags.get("tunnel") == "yes":
+            continue
+        lon = np.asarray([p[0] for p in w.geometry], dtype=np.float64)
+        lat = np.asarray([p[1] for p in w.geometry], dtype=np.float64)
+        if len(lon) < 2:
+            continue
+        east, north = frame.to_enu(lon, lat)
+        try:
+            line = sg.LineString(list(zip(east.tolist(), north.tolist())))
+        except Exception:  # noqa: BLE001
+            continue
+        if line.length <= 0.0:
+            continue
+        width = _ROADSIDE_WIDTHS.get(hw, 4.0)
+        try:
+            polys.append(line.buffer(width * 0.5 + 1.8,
+                                     cap_style="flat", join_style="mitre"))
+        except Exception:  # noqa: BLE001
+            continue
+    if not polys:
+        return None
+    try:
+        return unary_union(polys)
+    except Exception:  # noqa: BLE001
+        return None
