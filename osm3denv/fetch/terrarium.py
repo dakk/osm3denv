@@ -71,16 +71,17 @@ def zoom_for_step(step_m: float, lat: float) -> int:
 # ---------------------------------------------------------------------------
 
 def _download_tile(z: int, x: int, y: int, cache_dir: Path,
-                   refresh: bool = False) -> Path | None:
+                   refresh: bool = False,
+                   progress: str = "") -> Path | None:
     path = cache_dir / f"terrarium_{z}_{x}_{y}.png"
     if not refresh and path.exists() and path.stat().st_size > 0:
-        log.debug("terrarium cache hit: %s", path.name)
+        log.debug("%sterrarium cache hit: %s", progress, path.name)
         return path
     url = _URL.format(z=z, x=x, y=y)
-    log.info("terrarium downloading %s", url)
+    log.info("%sterrarium downloading %s", progress, url)
     resp = requests.get(url, timeout=60)
     if resp.status_code == 404:
-        log.warning("terrarium tile %d/%d/%d missing (ocean/nodata)", z, x, y)
+        log.warning("%sterrarium tile %d/%d/%d missing (ocean/nodata)", progress, z, x, y)
         return None
     resp.raise_for_status()
     path.write_bytes(resp.content)
@@ -156,8 +157,8 @@ def load_mosaic(bbox: tuple[float, float, float, float], cache_dir: Path,
     for iy, ty in enumerate(range(ty_min, ty_max + 1)):
         for ix, tx in enumerate(range(tx_min, tx_max + 1)):
             n_done = iy * nx + ix + 1
-            log.info("terrarium tile [%d/%d] %d/%d/%d", n_done, total, zoom, tx, ty)
-            p = _download_tile(zoom, tx, ty, cache_dir, refresh=refresh)
+            p = _download_tile(zoom, tx, ty, cache_dir, refresh=refresh,
+                               progress=f"[{n_done}/{total}] ")
             if p is not None:
                 mosaic[iy * _PX:(iy + 1) * _PX,
                        ix * _PX:(ix + 1) * _PX] = _decode_tile(p)
