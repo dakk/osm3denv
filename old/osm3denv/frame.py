@@ -29,6 +29,7 @@ class Frame:
     def bbox_ll(self, radius_m: float, pad_m: float = 0.0) -> tuple[float, float, float, float]:
         """Return (min_lon, min_lat, max_lon, max_lat) enclosing a square of side 2*(radius+pad)."""
         r = radius_m + pad_m
+        # Sample 4 corners of the square and take their geographic extent.
         e = np.array([-r, r, r, -r])
         n = np.array([-r, -r, r, r])
         lon, lat = self.to_ll(e, n)

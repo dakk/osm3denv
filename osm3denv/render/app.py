@@ -1,314 +1,202 @@
-"""OgreBites application context for the osm3denv viewer."""
+"""Minimal Panda3D viewer for a TerrainData mesh.
+
+Controls
+--------
+* **W / A / S / D** — move forward / left / back / right (along camera heading, ground plane).
+* **Q / E** — move down / up (world Z).
+* **Shift** — sprint (x4 speed).
+* **Hold right mouse button** — drag to look around.
+* **Mouse wheel** — cycle move speed.
+* **Escape** — quit.
+"""
 from __future__ import annotations
 
 import logging
-from pathlib import Path
+import math
+import sys
 
-import Ogre
-import Ogre.Bites as OB
-import Ogre.RTShader
+import numpy as np
+from direct.showbase.ShowBase import ShowBase
+from direct.task import Task
+from panda3d.core import (
+    AmbientLight,
+    DirectionalLight,
+    Geom,
+    GeomNode,
+    GeomTriangles,
+    GeomVertexData,
+    GeomVertexFormat,
+    GeomVertexWriter,
+    LVector3,
+    TextNode,
+    Vec4,
+    WindowProperties,
+)
+from direct.gui.OnscreenText import OnscreenText
 
-from osm3denv.render import materials, plants as plants_mod, upload
-from osm3denv.render.camera import FreeCamera
-from osm3denv.render.sky import SkyFollower, SunController, build_sky_dome
+from osm3denv.mesh.terrain import TerrainData
 
 log = logging.getLogger(__name__)
 
-_ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
+
+def _build_terrain_node(terrain: TerrainData) -> GeomNode:
+    vfmt = GeomVertexFormat.getV3n3t2()
+    vdata = GeomVertexData("terrain", vfmt, Geom.UHStatic)
+    n = len(terrain.vertices)
+    vdata.setNumRows(n)
+
+    vwriter = GeomVertexWriter(vdata, "vertex")
+    nwriter = GeomVertexWriter(vdata, "normal")
+    twriter = GeomVertexWriter(vdata, "texcoord")
+
+    verts = terrain.vertices
+    norms = terrain.normals
+    uvs = terrain.uvs
+    for i in range(n):
+        vx, vy, vz = verts[i]
+        nx, ny, nz = norms[i]
+        u, v = uvs[i]
+        vwriter.addData3(float(vx), float(vy), float(vz))
+        nwriter.addData3(float(nx), float(ny), float(nz))
+        twriter.addData2(float(u), float(v))
+
+    prim = GeomTriangles(Geom.UHStatic)
+    idx = np.asarray(terrain.indices, dtype=np.uint32).reshape(-1, 3)
+    for a, b, c in idx:
+        prim.addVertices(int(a), int(b), int(c))
+    prim.closePrimitive()
+
+    geom = Geom(vdata)
+    geom.addPrimitive(prim)
+    node = GeomNode("terrain")
+    node.addGeom(geom)
+    return node
 
 
-class ViewerApp(OB.ApplicationContext, OB.InputListener):
-    def __init__(self, terrain, buildings, roads, water, areas, trees,
-                 *, furniture=None, fountains=None, monuments=None,
-                 crossings=None, texture_root: Path | None = None,
-                 plant_pack_root: Path | None = None):
-        OB.ApplicationContext.__init__(self, "osm3denv")
-        OB.InputListener.__init__(self)
-        self._terrain = terrain
-        self._buildings = buildings
-        self._roads = roads
-        self._water = water
-        self._areas = areas or []
-        self._trees = trees
-        self._furniture = furniture or []
-        self._fountains = fountains
-        self._monuments = monuments
-        self._crossings = crossings
-        self._texture_root = texture_root
-        self._plant_pack_root = plant_pack_root
-        self._plants = None  # populated in setup() once Ogre is initialised
-        self._camera: FreeCamera | None = None
-        # Let the materials factories know whether PBR textures are cached.
-        materials.set_texture_root(texture_root)
+class TerrainViewer(ShowBase):
+    MOVE_KEYS = ("w", "a", "s", "d", "q", "e")
 
-    def locateResources(self):
-        # Inject our asset directories before Ogre loads resources.
-        OB.ApplicationContext.locateResources(self)
-        rgm = Ogre.ResourceGroupManager.getSingleton()
-        for sub in ("shaders", "shaders/postfx", "materials", "compositors"):
-            p = _ASSETS_DIR / sub
-            if p.is_dir():
-                rgm.addResourceLocation(str(p), "FileSystem",
-                                        Ogre.RGN_DEFAULT, True)
-                log.debug("resource location added: %s", p)
-        # PBR texture packs cached by osm3denv.fetch.textures. Add each pack
-        # subdirectory directly — Ogre's recursive lookup on the cache root
-        # doesn't surface files in subfolders for resource-by-name queries.
-        if self._texture_root is not None and self._texture_root.is_dir():
-            for pack_dir in sorted(self._texture_root.iterdir()):
-                if pack_dir.is_dir():
-                    rgm.addResourceLocation(str(pack_dir), "FileSystem",
-                                            Ogre.RGN_DEFAULT, False)
-                    log.debug("resource location added: %s", pack_dir)
-        # 3D mesh packs (Shapespark plants kit). Register the pack root +
-        # every subdirectory so Assimp can find the glTF and its companion
-        # buffer/textures next to it.
-        if self._plant_pack_root is not None and self._plant_pack_root.is_dir():
-            for p in [self._plant_pack_root, *[d for d in self._plant_pack_root.rglob('*') if d.is_dir()]]:
-                rgm.addResourceLocation(str(p), "FileSystem",
-                                        Ogre.RGN_DEFAULT, False)
-                log.debug("resource location added: %s", p)
+    def __init__(self, terrain: TerrainData):
+        ShowBase.__init__(self)
 
-    # ApplicationContext.setup is called after initApp() creates the window + root.
-    def setup(self):
-        OB.ApplicationContext.setup(self)
-        self.addInputListener(self)
+        props = WindowProperties()
+        props.setTitle("osm3denv — terrain")
+        self.win.requestProperties(props)
 
-        root = self.getRoot()
-        scn = root.createSceneManager()
-        Ogre.RTShader.ShaderGenerator.getSingleton().addSceneManager(scn)
+        self.setBackgroundColor(0.53, 0.70, 0.86, 1.0)
 
-        scn.setAmbientLight(Ogre.ColourValue(0.35, 0.35, 0.40))
+        terrain_node = _build_terrain_node(terrain)
+        terrain_np = self.render.attachNewNode(terrain_node)
+        terrain_np.setColor(Vec4(0.45, 0.55, 0.35, 1.0))
 
-        # Directional shadow map for the sun. Modulative mode applies shadow
-        # darkening as a separate post pass, so it doesn't require changes to
-        # our custom surface shaders. FocusedShadowCameraSetup fits the shadow
-        # camera tightly to the view frustum for the best shadow resolution.
-        scn.setShadowTechnique(Ogre.SHADOWTYPE_TEXTURE_MODULATIVE)
-        scn.setShadowTextureCount(1)
-        scn.setShadowTextureSize(2048)
-        scn.setShadowTexturePixelFormat(Ogre.PF_DEPTH16)
-        scn.setShadowFarDistance(min(3000.0, 2.5 * float(self._terrain.radius_m)))
-        scn.setShadowColour(Ogre.ColourValue(0.45, 0.45, 0.52))
-        scn.setShadowDirectionalLightExtrusionDistance(10000.0)
-        # .create() on the concrete Ptr returns a ShadowCameraSetupPtr that
-        # setShadowCameraSetup accepts; passing a plain FocusedShadowCameraSetup
-        # fails SWIG's Ptr typecheck.
-        scn.setShadowCameraSetup(Ogre.FocusedShadowCameraSetupPtr().create())
+        ambient = AmbientLight("ambient")
+        ambient.setColor(Vec4(0.35, 0.35, 0.40, 1.0))
+        self.render.setLight(self.render.attachNewNode(ambient))
 
-        sun = scn.createLight("sun")
-        sun.setType(Ogre.Light.LT_DIRECTIONAL)
-        sun.setCastShadows(True)
-        sun_node = scn.getRootSceneNode().createChildSceneNode()
-        sun_node.attachObject(sun)
-        # Initial direction; SunController will overwrite it based on time of day.
-        sun_node.setDirection(-0.4, -0.8, -0.4, Ogre.Node.TS_WORLD)
+        sun = DirectionalLight("sun")
+        sun.setColor(Vec4(0.95, 0.92, 0.85, 1.0))
+        sun_np = self.render.attachNewNode(sun)
+        sun_np.setHpr(-30, -50, 0)
+        self.render.setLight(sun_np)
 
-        cam = scn.createCamera("cam")
-        cam.setNearClipDistance(1.0)
-        # Far plane sized to the scene; tighter = more depth precision near the ground.
-        cam.setFarClipDistance(max(3000.0, 3.0 * float(self._terrain.radius_m)))
-        cam.setAutoAspectRatio(True)
-        cam_node = scn.getRootSceneNode().createChildSceneNode()
-        cam_node.attachObject(cam)
+        r = float(terrain.radius_m)
+        self.disableMouse()
+        self.camera.setPos(0.0, -r * 1.5, r * 0.8)
+        self.heading = 0.0
+        self.pitch = -25.0
+        self.camera.setHpr(self.heading, self.pitch, 0)
+        self.camLens.setFar(max(20_000.0, r * 20.0))
+        self.camLens.setNear(1.0)
+        self.camLens.setFov(70)
 
-        # Spawn slightly above terrain at the origin, looking north (−z in our mapping).
-        y0 = float(self._terrain.sampler.height_at(0.0, 0.0)) + 1.7
-        cam_node.setPosition(0.0, y0, 0.0)
-        cam_node.lookAt(Ogre.Vector3(0.0, y0, -100.0), Ogre.Node.TS_WORLD)
+        self.move_speed = max(50.0, r * 0.2)  # m/s at default; Shift sprints x4
+        self.shift_held = False
+        self.keys: dict[str, bool] = {k: False for k in self.MOVE_KEYS}
+        for k in self.MOVE_KEYS:
+            self.accept(k, self._set_key, [k, True])
+            self.accept(k + "-up", self._set_key, [k, False])
+        self.accept("shift", self._set_shift, [True])
+        self.accept("shift-up", self._set_shift, [False])
+        self.accept("wheel_up", self._bump_speed, [1.25])
+        self.accept("wheel_down", self._bump_speed, [0.8])
+        self.accept("escape", sys.exit)
 
-        vp = self.getRenderWindow().addViewport(cam)
-        # Background is a fallback; the sky dome covers the viewport every frame.
-        vp.setBackgroundColour(Ogre.ColourValue(0.0, 0.0, 0.0))
+        self.looking = False
+        self._last_mouse: tuple[float, float] | None = None
+        self.accept("mouse3", self._start_look)
+        self.accept("mouse3-up", self._stop_look)
 
-        # HDR + bloom + ACES tonemap compositor. Attaching the compositor to
-        # the viewport routes the scene through our post-fx chain.
-        self._enable_postfx(vp)
+        OnscreenText(
+            text="WASD/QE move  ·  right-drag look  ·  Shift sprint  ·  wheel speed  ·  Esc quit",
+            pos=(-1.3, -0.95), scale=0.04,
+            fg=(1, 1, 1, 0.9), bg=(0, 0, 0, 0.4),
+            align=TextNode.ALeft, mayChange=False,
+        )
+        self.speed_text = OnscreenText(
+            text="", pos=(1.3, -0.95), scale=0.04,
+            fg=(1, 1, 1, 0.9), bg=(0, 0, 0, 0.4),
+            align=TextNode.ARight, mayChange=True,
+        )
+        self._refresh_speed_text()
 
-        # Pre-load + slice the Shapespark plants kit so Entities created in
-        # _build_scene can reference per-plant meshes by name.
-        from osm3denv.fetch import meshes as _mesh_fetch
-        gltf_path = None
-        if self._plant_pack_root is not None:
-            # derive from fetch config so the path logic stays in one place
-            info = _mesh_fetch.MESH_PACKS["shapespark_plants"]
-            candidate = self._plant_pack_root / info["gltf"]
-            if candidate.is_file():
-                gltf_path = candidate
-        if gltf_path is not None:
-            self._plants = plants_mod.load_kit(gltf_path)
-        else:
-            self._plants = plants_mod.PlantKit()
+        self.taskMgr.add(self._update, "camera_update")
 
-        self._build_scene(scn)
+    def _set_key(self, k: str, v: bool) -> None:
+        self.keys[k] = v
 
-        sky_node = build_sky_dome(scn, cam_node)
-        self._sky_follower = SkyFollower(sky_node, cam_node)
-        self.addInputListener(self._sky_follower)
+    def _set_shift(self, v: bool) -> None:
+        self.shift_held = v
 
-        self._sun_controller = SunController(sun_node, sun, initial_hour=10.0)
-        self.addInputListener(self._sun_controller)
+    def _bump_speed(self, factor: float) -> None:
+        self.move_speed = max(1.0, min(10_000.0, self.move_speed * factor))
+        self._refresh_speed_text()
 
-        self._camera = FreeCamera(node=cam_node, walk_speed=10.0)
-        self.addInputListener(self._camera)
-        # Capture the mouse so rotation can sweep past screen edges.
-        self.setWindowGrab(True)
+    def _refresh_speed_text(self) -> None:
+        self.speed_text.setText(f"speed: {self.move_speed:.0f} m/s")
 
-    def _enable_postfx(self, vp: "Ogre.Viewport") -> None:
-        cm = Ogre.CompositorManager.getSingleton()
-        inst = cm.addCompositor(vp, "osm3denv/postfx")
-        if inst is None:
-            log.warning("postfx compositor could not be added; check ogre.log")
-            return
-        cm.setCompositorEnabled(vp, "osm3denv/postfx", True)
+    def _start_look(self) -> None:
+        if self.mouseWatcherNode.hasMouse():
+            m = self.mouseWatcherNode.getMouse()
+            self._last_mouse = (m.getX(), m.getY())
+            self.looking = True
 
-        # Feed the blur passes a texel_size matching their quarter-res RT so
-        # the sample offsets actually land one pixel apart.
-        w = max(1, int(self.getRenderWindow().getWidth()))
-        h = max(1, int(self.getRenderWindow().getHeight()))
-        step = Ogre.Vector2(1.0 / (w * 0.25), 1.0 / (h * 0.25))
-        for mat_name in ("osm3d/postfx/blur_h", "osm3d/postfx/blur_v"):
-            mat = Ogre.MaterialManager.getSingleton().getByName(mat_name)
-            if mat is None:
-                continue
-            params = mat.getTechnique(0).getPass(0).getFragmentProgramParameters()
-            params.setNamedConstant("texel_size", step)
+    def _stop_look(self) -> None:
+        self.looking = False
+        self._last_mouse = None
 
-    def _build_scene(self, scn):
-        t = self._terrain
-        upload.attach(scn, "terrain", t.vertices, t.normals, t.indices,
-                      materials.terrain(), uvs=t.uvs)
-        # Area polygons (vegetation, residential, industrial, ...) follow the
-        # terrain surface exactly; strong per-material depth_bias makes them
-        # win the depth test against the terrain they sit on.
-        for i, am in enumerate(self._areas):
-            mat_name = am.material_factory()
-            upload.attach(scn, f"area_{i}_{mat_name}",
-                          am.vertices, am.normals, am.indices, mat_name,
-                          uvs=am.uvs)
-        if self._roads is not None:
-            for r in self._roads:
-                upload.attach(scn, f"roads_{r.kind}", r.vertices, r.normals,
-                              r.indices, materials.roads_for_kind(r.kind),
-                              uvs=r.uvs)
-        if self._water is not None:
-            w = self._water
-            upload.attach(scn, "water", w.vertices, w.normals, w.indices,
-                          materials.water(), uvs=w.uvs)
-        if self._buildings is not None:
-            for b in self._buildings:
-                upload.attach(scn, f"buildings_v{b.variant}",
-                              b.vertices, b.normals, b.indices,
-                              materials.buildings_for_variant(b.variant),
-                              uvs=b.uvs, colors=b.colors)
-                # Stone cornice trim rendered with a neutral warm-stone
-                # material regardless of the building's wall pack.
-                if len(b.trim_indices) > 0:
-                    upload.attach(scn, f"buildings_trim_v{b.variant}",
-                                  b.trim_vertices, b.trim_normals,
-                                  b.trim_indices, materials.building_trim(),
-                                  uvs=b.trim_uvs)
-        if (self._trees is not None and self._trees.count > 0
-                and self._plants and self._plants.num_trees > 0):
-            self._attach_trees(scn)
-        for fm in self._furniture:
-            if fm.count == 0:
-                continue
-            mat = (materials.furniture_metal() if fm.kind == "lamp"
-                   else materials.furniture_wood())
-            upload.attach(scn, f"furniture_{fm.kind}",
-                          fm.vertices, fm.normals, fm.indices, mat,
-                          uvs=fm.uvs)
-        # Fountains = stone basin + water disc.
-        if self._fountains is not None and self._fountains.count > 0:
-            f = self._fountains
-            upload.attach(scn, "fountain_stone",
-                          f.stone_vertices, f.stone_normals,
-                          f.stone_indices, materials.fountain_stone(),
-                          uvs=f.stone_uvs)
-            upload.attach(scn, "fountain_water",
-                          f.water_vertices, f.water_normals,
-                          f.water_indices, materials.water(),
-                          uvs=f.water_uvs)
-        if self._monuments is not None and self._monuments.count > 0:
-            m = self._monuments
-            upload.attach(scn, "monuments",
-                          m.vertices, m.normals, m.indices,
-                          materials.monument_stone(), uvs=m.uvs)
-        if self._crossings is not None and self._crossings.count > 0:
-            c = self._crossings
-            upload.attach(scn, "crossings",
-                          c.vertices, c.normals, c.indices,
-                          materials.crossing_paint(), uvs=c.uvs)
+    def _update(self, task: Task.Task) -> int:
+        dt = globalClock.getDt()  # noqa: F821 — panda3d injects globalClock
 
-    def _attach_trees(self, scn) -> None:
-        """Spawn one Entity per tree placement from the Shapespark plants kit.
+        if self.looking and self.mouseWatcherNode.hasMouse():
+            m = self.mouseWatcherNode.getMouse()
+            if self._last_mouse is not None:
+                dx = m.getX() - self._last_mouse[0]
+                dy = m.getY() - self._last_mouse[1]
+                self.heading -= dx * 180.0
+                self.pitch = max(-89.0, min(89.0, self.pitch + dy * 180.0))
+                self.camera.setHpr(self.heading, self.pitch, 0)
+            self._last_mouse = (m.getX(), m.getY())
 
-        Species preference maps to a plant pick: conifer → plants with names
-        containing "pine"/"spruce" when available, otherwise round-robin.
-        Height is set by scaling the plant mesh vertically to match the
-        OSM ``height`` tag (or the scatter default).
-        """
-        trees = self._plants.trees
-        if not trees:
-            return
-        # Partition plants into conifer-looking and the rest based on glTF
-        # node-name heuristics (Shapespark names include species hints).
-        def _is_conifer(name: str) -> bool:
-            n = name.lower()
-            return any(k in n for k in ("pine", "spruce", "fir", "cedar",
-                                        "conifer"))
-        conifers = [p for p in trees if _is_conifer(p.gltf_name)]
-        broadleaves = [p for p in trees if not _is_conifer(p.gltf_name)]
-        if not conifers:
-            conifers = trees
-        if not broadleaves:
-            broadleaves = trees
+        h = math.radians(self.heading)
+        forward = LVector3(-math.sin(h), math.cos(h), 0.0)
+        right = LVector3(math.cos(h), math.sin(h), 0.0)
+        up = LVector3(0.0, 0.0, 1.0)
 
-        root = scn.getRootSceneNode()
-        y_axis = Ogre.Vector3(0.0, 1.0, 0.0)
-        for i, tp in enumerate(self._trees.placements):
-            pool = conifers if tp.species == "conifer" else broadleaves
-            plant = pool[(tp.seed & 0x7FFFFFFF) % len(pool)]
-            scale = tp.height / max(plant.height, 0.1)
+        move = LVector3(0.0, 0.0, 0.0)
+        if self.keys["w"]: move += forward
+        if self.keys["s"]: move -= forward
+        if self.keys["d"]: move += right
+        if self.keys["a"]: move -= right
+        if self.keys["e"]: move += up
+        if self.keys["q"]: move -= up
 
-            # The kit bakes a grid translation into each plant's vertex data
-            # (e.g. x≈9.4, z≈2.7). To make the plant's centroid-XZ and base-Y
-            # land at (east, base_y, -north) AFTER a yaw rotation, rotate the
-            # pivot by the yaw quaternion first, then subtract scale*rotated
-            # pivot from the target position.
-            quat = Ogre.Quaternion(Ogre.Radian(float(tp.yaw_rad)), y_axis)
-            rp = quat * Ogre.Vector3(plant.pivot_x, plant.pivot_y, plant.pivot_z)
+        if move.lengthSquared() > 0.0:
+            move.normalize()
+            speed = self.move_speed * (4.0 if self.shift_held else 1.0)
+            self.camera.setPos(self.camera.getPos() + move * speed * dt)
 
-            ent = scn.createEntity(f"tree_{i}", plant.name)
-            node = root.createChildSceneNode()
-            node.setPosition(tp.east - scale * rp.x,
-                             tp.base_y - scale * rp.y,
-                             -tp.north - scale * rp.z)
-            node.setOrientation(quat)
-            node.setScale(scale, scale, scale)
-            node.attachObject(ent)
-
-    def keyPressed(self, evt) -> bool:
-        if evt.keysym.sym == OB.SDLK_ESCAPE:
-            self.getRoot().queueEndRendering()
-            return True
-        return False
+        return Task.cont
 
 
-def run_viewer(*, terrain, buildings, roads, water, areas=None, trees=None,
-               furniture=None, fountains=None, monuments=None, crossings=None,
-               texture_root: Path | None = None,
-               plant_pack_root: Path | None = None) -> None:
-    app = ViewerApp(terrain, buildings, roads, water, areas, trees,
-                    furniture=furniture,
-                    fountains=fountains,
-                    monuments=monuments,
-                    crossings=crossings,
-                    texture_root=texture_root,
-                    plant_pack_root=plant_pack_root)
-    app.initApp()
-    try:
-        app.getRoot().startRendering()
-    finally:
-        app.closeApp()
+def run_viewer(terrain: TerrainData) -> None:
+    TerrainViewer(terrain).run()

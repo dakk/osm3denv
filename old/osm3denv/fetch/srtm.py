@@ -105,6 +105,7 @@ class HgtMosaic:
             dr = (row - r0).astype(np.float32); dc = (col - c0).astype(np.float32)
             v00 = arr[r0, c0]; v01 = arr[r0, c1]
             v10 = arr[r1, c0]; v11 = arr[r1, c1]
+            # NaN fallback: use mean of non-NaN corners, else 0.
             stack = np.stack([v00, v01, v10, v11])
             with np.errstate(invalid="ignore"):
                 fill = np.where(np.all(np.isnan(stack), axis=0), 0.0, np.nanmean(stack, axis=0))

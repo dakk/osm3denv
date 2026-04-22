@@ -1,9 +1,8 @@
 """OSM feature download via Overpass API.
 
 Returns a lightweight dataclass tree (ways + relations with inline geometry).
-Raw Overpass JSON is cached under ``cache_dir`` keyed by bbox; default TTL is
-7 days. The query is intentionally minimal — this iteration downloads and
-caches the data but does not yet render it.
+Consumers in :mod:`osm3denv.mesh` filter by tags. Raw Overpass JSON is cached
+under ``cache_dir`` keyed by bbox; default TTL is 7 days.
 """
 from __future__ import annotations
 
@@ -21,7 +20,7 @@ log = logging.getLogger(__name__)
 
 DEFAULT_OVERPASS = "https://overpass-api.de/api/interpreter"
 FALLBACK_OVERPASS = "https://overpass.kumi.systems/api/interpreter"
-USER_AGENT = "osm3denv/0.2 (+https://github.com/local/osm3denv)"
+USER_AGENT = "osm3denv/0.1 (+https://github.com/local/osm3denv)"
 
 
 @dataclass
@@ -68,8 +67,34 @@ def _build_query(bbox_ll: tuple[float, float, float, float]) -> str:
     return f"""[out:json][timeout:90];
 (
   way["building"]({bb});
+  way["building:part"]({bb});
+  relation["building"]({bb});
   way["highway"]({bb});
+  way["railway"]({bb});
   way["natural"="water"]({bb});
+  relation["natural"="water"]({bb});
+  way["waterway"]({bb});
+  way["natural"="coastline"]({bb});
+  way["landuse"]({bb});
+  relation["landuse"]({bb});
+  way["leisure"]({bb});
+  relation["leisure"]({bb});
+  way["place"="square"]({bb});
+  relation["place"="square"]({bb});
+  way["highway"="pedestrian"]["area"="yes"]({bb});
+  way["amenity"="marketplace"]({bb});
+  relation["amenity"="marketplace"]({bb});
+  way["natural"~"^(wood|scrub|grassland|heath|bare_rock|sand|beach|scree)$"]({bb});
+  relation["natural"~"^(wood|scrub|grassland|heath)$"]({bb});
+  node["natural"="tree"]({bb});
+  node["highway"="street_lamp"]({bb});
+  node["amenity"="bench"]({bb});
+  way["amenity"="fountain"]({bb});
+  relation["amenity"="fountain"]({bb});
+  node["amenity"="fountain"]({bb});
+  way["man_made"~"^(obelisk|column)$"]({bb});
+  node["man_made"~"^(obelisk|column)$"]({bb});
+  node["highway"="crossing"]({bb});
 );
 out geom;
 """
@@ -124,6 +149,7 @@ def _parse(data: dict) -> OSMData:
         elif tp == "node" and tags:
             out.nodes.append(OSMNode(id=el["id"], tags=tags,
                                      lon=el["lon"], lat=el["lat"]))
+        # Tag-less nodes are geometry-only refs for ways; skipped.
     return out
 
 
