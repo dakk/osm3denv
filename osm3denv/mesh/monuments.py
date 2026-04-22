@@ -272,9 +272,13 @@ def build(osm: OSMData, frame: Frame, sampler: TerrainSampler) -> MonumentsMesh:
                                     verts, norms, uvs, idx, v_off, yaw=yaw)
         count += 1
 
-    # Point/node features.
+    # Point/node features. Skip anything double-tagged as street furniture —
+    # decorative lamp posts are sometimes tagged man_made=obelisk in Rome
+    # OSM, and those get their own geometry from mesh.furniture.
     node_candidates = osm.filter_nodes(
-        lambda t: t.get("man_made") in ("obelisk", "column"))
+        lambda t: t.get("man_made") in ("obelisk", "column")
+        and t.get("highway") != "street_lamp"
+        and t.get("amenity") not in ("bench",))
     for node in node_candidates:
         kind = node.tags["man_made"]
         e, n = frame.to_enu(node.lon, node.lat)
