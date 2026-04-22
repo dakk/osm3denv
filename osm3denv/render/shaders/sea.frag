@@ -33,20 +33,20 @@ vec3 waterNormal(vec2 p, float t) {
     vec3 N = vec3(0.0);
 
     // ---- 4 dominant waves (match vertex shader) ----
-    gerstnerNormal(p, t, normalize(vec2( 1.0,  0.6)),  1.00, 0.35, 0.0105, 0.91, N);
-    gerstnerNormal(p, t, normalize(vec2(-0.3,  1.0)),  0.60, 0.30, 0.0180, 1.11, N);
-    gerstnerNormal(p, t, normalize(vec2( 1.0, -0.25)), 0.35, 0.25, 0.0314, 1.37, N);
-    gerstnerNormal(p, t, normalize(vec2(-0.7,  0.9)),  0.20, 0.22, 0.0483, 1.69, N);
+    gerstnerNormal(p, t, normalize(vec2( 1.0,  0.6)),  0.35, 0.25, 0.0105, 0.91, N);
+    gerstnerNormal(p, t, normalize(vec2(-0.3,  1.0)),  0.20, 0.20, 0.0180, 1.11, N);
+    gerstnerNormal(p, t, normalize(vec2( 1.0, -0.25)), 0.10, 0.18, 0.0314, 1.37, N);
+    gerstnerNormal(p, t, normalize(vec2(-0.7,  0.9)),  0.06, 0.15, 0.0483, 1.69, N);
 
     // ---- 4 high-frequency detail waves (fragment only) ----
     // λ≈70 m  — fine chop
-    gerstnerNormal(p, t, normalize(vec2( 0.8, -0.6)),  0.12, 0.20, 0.0898, 2.58, N);
+    gerstnerNormal(p, t, normalize(vec2( 0.8, -0.6)),  0.04, 0.15, 0.0898, 2.58, N);
     // λ≈40 m
-    gerstnerNormal(p, t, normalize(vec2(-0.5, -1.0)),  0.08, 0.18, 0.1571, 3.41, N);
+    gerstnerNormal(p, t, normalize(vec2(-0.5, -1.0)),  0.03, 0.12, 0.1571, 3.41, N);
     // λ≈20 m
-    gerstnerNormal(p, t, normalize(vec2( 0.4,  1.0)),  0.05, 0.15, 0.3142, 4.82, N);
+    gerstnerNormal(p, t, normalize(vec2( 0.4,  1.0)),  0.02, 0.10, 0.3142, 4.82, N);
     // λ≈12 m  — surface ripple
-    gerstnerNormal(p, t, normalize(vec2(-1.0,  0.3)),  0.03, 0.12, 0.5236, 6.23, N);
+    gerstnerNormal(p, t, normalize(vec2(-1.0,  0.3)),  0.01, 0.08, 0.5236, 6.23, N);
 
     return normalize(vec3(-N.x, -N.y, 1.0 - N.z));
 }
@@ -75,7 +75,7 @@ void main() {
     // Wave steepness scalar — drives "whitecap" tinting near crests.
     // N.z ≈ 1 on a flat surface, decreases as waves steepen.
     float steepness = 1.0 - N.z;
-    vec3 foam = vec3(0.95, 0.97, 1.0) * smoothstep(0.35, 0.65, steepness) * 0.4;
+    vec3 foam = vec3(0.95, 0.97, 1.0) * smoothstep(0.55, 0.80, steepness) * 0.3;
 
     // Base water colour: deep blue at normal incidence, teal at grazing.
     vec3 deepColor    = vec3(0.03, 0.12, 0.24);

@@ -37,14 +37,14 @@ void main() {
     float t = osg_FrameTime;
     vec3 disp = vec3(0.0);
 
-    // λ≈600 m  A=1.0 m  heading ~NE
-    gerstnerDisp(p, t, normalize(vec2(1.0,  0.6)), 1.0, 0.35, 0.0105, 0.91, disp);
-    // λ≈350 m  A=0.6 m  heading ~NNW
-    gerstnerDisp(p, t, normalize(vec2(-0.3, 1.0)), 0.6, 0.30, 0.0180, 1.11, disp);
-    // λ≈200 m  A=0.35 m heading ~E
-    gerstnerDisp(p, t, normalize(vec2(1.0, -0.25)), 0.35, 0.25, 0.0314, 1.37, disp);
-    // λ≈130 m  A=0.20 m heading ~NW
-    gerstnerDisp(p, t, normalize(vec2(-0.7, 0.9)), 0.20, 0.22, 0.0483, 1.69, disp);
+    // λ≈600 m  A=0.35 m  heading ~NE
+    gerstnerDisp(p, t, normalize(vec2(1.0,  0.6)), 0.35, 0.25, 0.0105, 0.91, disp);
+    // λ≈350 m  A=0.20 m  heading ~NNW
+    gerstnerDisp(p, t, normalize(vec2(-0.3, 1.0)), 0.20, 0.20, 0.0180, 1.11, disp);
+    // λ≈200 m  A=0.10 m  heading ~E
+    gerstnerDisp(p, t, normalize(vec2(1.0, -0.25)), 0.10, 0.18, 0.0314, 1.37, disp);
+    // λ≈130 m  A=0.06 m  heading ~NW
+    gerstnerDisp(p, t, normalize(vec2(-0.7, 0.9)), 0.06, 0.15, 0.0483, 1.69, disp);
 
     vOrigXY  = p;
     vWorldPos = (p3d_ModelMatrix * vec4(p3d_Vertex.xyz + disp, 1.0)).xyz;
