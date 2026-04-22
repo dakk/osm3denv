@@ -32,7 +32,7 @@ def main(lat, lon, radius_m, grid, cache_dir, fetch_only, refresh_cache, verbose
 
     if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
         raise click.BadParameter("lat must be in [-90,90], lon in [-180,180].")
-    radius_m = min(max(radius_m, 100.0), 5000.0)
+    radius_m = round(radius_m / 1000.0) * 1000
 
     cfg = Config(
         lat=lat, lon=lon, radius_m=radius_m, grid=grid,
