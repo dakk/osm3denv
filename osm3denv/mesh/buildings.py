@@ -48,16 +48,18 @@ _ROOF_LEVEL_M = 2.5     # shorter than a full storey
 # as its own colour. Values are deliberately kept above 0.65 so the tinted
 # brick never goes muddy/dark.
 _WALL_PALETTE = [
+    # All warm Mediterranean tints. Blue/sky/lavender/sage multiplied onto
+    # red brick shifts the hue unnaturally cool, so those are omitted.
     (1.00, 0.97, 0.92),  # warm white
-    (1.05, 0.90, 0.72),  # ochre
-    (1.00, 0.78, 0.68),  # terracotta
-    (0.98, 0.94, 0.80),  # cream
-    (0.92, 0.85, 0.95),  # pale lavender
-    (0.82, 0.92, 0.98),  # pale sky blue
-    (1.00, 0.85, 0.78),  # peach
-    (0.96, 0.80, 0.70),  # rose
-    (0.88, 0.95, 0.85),  # pale sage
-    (1.00, 0.92, 0.66),  # mustard
+    (1.05, 0.90, 0.70),  # ochre
+    (1.00, 0.78, 0.62),  # terracotta
+    (0.98, 0.92, 0.78),  # cream
+    (1.00, 0.85, 0.70),  # peach
+    (0.95, 0.78, 0.62),  # salmon / rose
+    (1.00, 0.92, 0.75),  # soft ivory
+    (0.92, 0.82, 0.70),  # muted sand
+    (1.00, 0.88, 0.62),  # mustard
+    (0.90, 0.74, 0.58),  # burnt sienna
 ]
 
 
@@ -193,8 +195,15 @@ def _rect_axes(ring: np.ndarray):
 # ---------------------------------------------------------------------------
 
 def _extrude(poly: sg.Polygon, wall_h: float, roof_h: float,
-             shape: str, base_y: float):
-    """Return (vertices, normals, uvs, indices) for one building, or None."""
+             shape: str, base_y: float, way_id: int = 0):
+    """Build one building mesh.
+
+    Returns (v, n, u, i, c, tv, tn, tu, ti) or None. ``c`` is a (V, 4) RGBA
+    vertex-colour array: wall vertices carry the per-building palette tint in
+    RGB, with ALPHA encoding the door centre u on the longest wall edge (and
+    0 elsewhere) so the fragment shader knows where to paint the door.
+    """
+    wall_rgb = _wall_colour(way_id)
     outer = np.asarray(poly.exterior.coords, dtype=np.float64)[:-1]
     inners = [np.asarray(h.coords, dtype=np.float64)[:-1] for h in poly.interiors]
     rings = [outer] + inners
@@ -244,10 +253,30 @@ def _extrude(poly: sg.Polygon, wall_h: float, roof_h: float,
     wall_norms: list[tuple[float, float, float]] = []
     wall_uvs:   list[tuple[float, float]] = []
     wall_idx:   list[tuple[int, int, int]] = []
+    wall_cols:  list[tuple[float, float, float, float]] = []
     WALL_TILE = 1.0
     top_v = wall_h / WALL_TILE
 
-    for ring in rings:
+    # Pre-scan the outer ring: pick the longest edge as the "door edge"
+    # (where the fragment shader will paint a front door).
+    _outer_sa = 0.0
+    _om = len(outer)
+    for _i in range(_om):
+        _outer_sa += outer[_i][0] * outer[(_i + 1) % _om][1] \
+                   - outer[(_i + 1) % _om][0] * outer[_i][1]
+    _outer_ord = outer[::-1] if _outer_sa < 0 else outer
+    edge_lengths = []
+    for _i in range(len(_outer_ord)):
+        a = _outer_ord[_i]; b = _outer_ord[(_i + 1) % len(_outer_ord)]
+        edge_lengths.append(float(np.hypot(b[0] - a[0], b[1] - a[1])))
+    longest_edge_idx = max(range(len(edge_lengths)),
+                           key=lambda i: edge_lengths[i]) if edge_lengths else -1
+    door_u = 0.0
+    if longest_edge_idx >= 0 and edge_lengths[longest_edge_idx] >= 2.0:
+        door_u = sum(edge_lengths[:longest_edge_idx]) \
+               + edge_lengths[longest_edge_idx] * 0.5
+
+    for ring_idx, ring in enumerate(rings):
         signed_area = 0.0
         m = len(ring)
         for i in range(m):
@@ -257,6 +286,7 @@ def _extrude(poly: sg.Polygon, wall_h: float, roof_h: float,
             ring = ring[::-1]
         m = len(ring)
         u_running = 0.0
+        edge_in_ring = 0
         for i in range(m):
             a = ring[i]; b = ring[(i + 1) % m]
             de = b[0] - a[0]; dn = b[1] - a[1]
@@ -275,7 +305,12 @@ def _extrude(poly: sg.Polygon, wall_h: float, roof_h: float,
             wall_norms.extend([normal] * 4)
             wall_uvs.extend([(u0, 0.0), (u1, 0.0), (u1, top_v), (u0, top_v)])
             wall_idx.extend([(v0, v0 + 1, v0 + 2), (v0, v0 + 2, v0 + 3)])
+            is_door_edge = (ring_idx == 0 and edge_in_ring == longest_edge_idx
+                            and door_u > 0.0)
+            alpha = door_u if is_door_edge else 0.0
+            wall_cols.extend([(wall_rgb[0], wall_rgb[1], wall_rgb[2], alpha)] * 4)
             u_running += length
+            edge_in_ring += 1
 
     # ----- Roof geometry per shape. -------------------------------------
     #
@@ -533,11 +568,13 @@ def _extrude(poly: sg.Polygon, wall_h: float, roof_h: float,
         wn = np.asarray(wall_norms, dtype=np.float32)
         wu = np.asarray(wall_uvs, dtype=np.float32)
         wi = np.asarray(wall_idx, dtype=np.uint32).reshape(-1)
+        wc = np.asarray(wall_cols, dtype=np.float32)
     else:
         wv = np.zeros((0, 3), dtype=np.float32)
         wn = np.zeros((0, 3), dtype=np.float32)
         wu = np.zeros((0, 2), dtype=np.float32)
         wi = np.zeros((0,), dtype=np.uint32)
+        wc = np.zeros((0, 4), dtype=np.float32)
 
     if extra_verts:
         ev = np.asarray(extra_verts, dtype=np.float32)
@@ -570,25 +607,48 @@ def _extrude(poly: sg.Polygon, wall_h: float, roof_h: float,
         ei + extra_off,
     ], axis=0).astype(np.uint32)
 
+    # Per-vertex colours: only wall vertices carry the building palette tint;
+    # floor, roof (flat) and extra (roof slopes) stay neutral white.
+    neutral = np.array([1.0, 1.0, 1.0, 0.0], dtype=np.float32)
+    floor_colors = np.tile(neutral, (len(floor), 1))
+    flat_roof_colors = np.tile(neutral, (len(flat_roof_verts), 1))
+    extra_colors = np.tile(neutral, (len(ev), 1))
+    colors = np.concatenate([floor_colors, flat_roof_colors, wc, extra_colors],
+                            axis=0)
+
     # --- Cornice band (trim geometry, separate material) ---------------
-    tv, tn, tu, ti = _build_cornice(outer, wall_top_y)
-    return vertices, normals, uvs, indices, tv, tn, tu, ti
+    tv, tn, tu, ti = _build_cornice(outer, wall_top_y, wall_h=wall_h)
+    return vertices, normals, uvs, indices, colors, tv, tn, tu, ti
 
 
 def _build_cornice(ring: np.ndarray, wall_top_y: float,
+                   *, wall_h: float = 0.0,
                    projection: float = 0.22,
                    height_up: float = 0.10,
                    height_down: float = 0.08):
-    """Thin stone band running along the top of every wall edge.
+    """Cornice band along every wall edge + optional 2nd-floor balconies.
 
-    Only the front, top and bottom faces are emitted (the back face is
-    concealed against the wall). Uses world-space XZ UVs so a future stone
-    material with a tiled texture reads cleanly.
+    Both are rendered with the shared stone-trim material, so any horizontal
+    face the wall shader would have misclassified as "roof" (getting the
+    terracotta-tile pattern) is rendered as warm stone instead.
     """
     tv: list[tuple[float, float, float]] = []
     tn: list[tuple[float, float, float]] = []
     tu: list[tuple[float, float]] = []
     tf: list[tuple[int, int, int]] = []
+
+    def _add_quad(p0, p1, p2, p3, normal):
+        base = len(tv)
+        tv.extend([p0, p1, p2, p3])
+        tn.extend([normal] * 4)
+        tu.extend([(p0[0], p0[2]), (p1[0], p1[2]),
+                   (p2[0], p2[2]), (p3[0], p3[2])])
+        tf.append((base, base + 1, base + 2))
+        tf.append((base, base + 2, base + 3))
+
+    # Base y for the building (bottom of the walls). The mesh places its
+    # floor at wall_top_y - wall_h.
+    base_y = wall_top_y - wall_h
 
     m = len(ring)
     for i in range(m):
@@ -597,12 +657,11 @@ def _build_cornice(ring: np.ndarray, wall_top_y: float,
         L = (de * de + dn * dn) ** 0.5
         if L < 1e-6:
             continue
-        # Outward horizontal normal in Ogre space (matches wall code).
         n_out = (dn / L, 0.0, de / L)
 
+        # --- Cornice band --------------------------------------------------
         y_bot = wall_top_y - height_down
         y_top = wall_top_y + height_up
-
         a_inner_b = (float(a[0]), y_bot, float(-a[1]))
         b_inner_b = (float(b[0]), y_bot, float(-b[1]))
         a_inner_t = (float(a[0]), y_top, float(-a[1]))
@@ -615,23 +674,109 @@ def _build_cornice(ring: np.ndarray, wall_top_y: float,
                      a_inner_t[2] + projection * n_out[2])
         b_outer_t = (b_inner_t[0] + projection * n_out[0], y_top,
                      b_inner_t[2] + projection * n_out[2])
-
-        def _add_quad(p0, p1, p2, p3, normal):
-            base = len(tv)
-            tv.extend([p0, p1, p2, p3])
-            tn.extend([normal] * 4)
-            # World-XZ planar UV in metres.
-            tu.extend([(p0[0], p0[2]), (p1[0], p1[2]),
-                       (p2[0], p2[2]), (p3[0], p3[2])])
-            tf.append((base, base + 1, base + 2))
-            tf.append((base, base + 2, base + 3))
-
-        # Top face
         _add_quad(a_inner_t, b_inner_t, b_outer_t, a_outer_t, (0.0, 1.0, 0.0))
-        # Bottom face (opposite winding so normal points -Y)
         _add_quad(a_inner_b, a_outer_b, b_outer_b, b_inner_b, (0.0, -1.0, 0.0))
-        # Front (outward) face
         _add_quad(a_outer_b, a_outer_t, b_outer_t, b_outer_b, n_out)
+
+        # --- Balcony slabs on the 2nd floor ---------------------------
+        # Each window in the wall shader is centred at u = 0.8 + n*1.6 for
+        # every cell (cell size 1.6 m wide × 3 m tall). Place balconies at
+        # the floor level of the 2nd storey, skipping every other window to
+        # keep density manageable.
+        floor2_y = base_y + 3.0
+        if wall_h >= 6.0 and floor2_y + 0.1 < wall_top_y - 0.5:
+            # Unit tangent along the wall in Ogre (east, y, -north) frame.
+            t_x = de / L
+            t_z = -dn / L
+            n_x = n_out[0]
+            n_z = n_out[2]
+
+            b_half_w = 0.55    # 1.1 m wide
+            b_depth  = 0.55    # 0.55 m protrusion
+            b_thick  = 0.10
+
+            def _local(la, lp, wx, wz):
+                return (wx + la * t_x + lp * n_x,
+                        wz + la * t_z + lp * n_z)
+
+            u = 0.8
+            while u + 0.8 < L:
+                # Reference point on the wall face at parameter u (Ogre).
+                wx = float(a[0]) + t_x * u
+                wz = float(-a[1]) + t_z * u
+                # Slab centre: project outward by half the depth so the
+                # inner edge sits flush against the wall.
+                cx = wx + 0.5 * b_depth * n_x
+                cz = wz + 0.5 * b_depth * n_z
+
+                # XZ corners in (along-wall, perp) local space.
+                c0x, c0z = _local(-b_half_w, -b_depth * 0.5, cx, cz)  # inner-L
+                c1x, c1z = _local(+b_half_w, -b_depth * 0.5, cx, cz)  # inner-R
+                c2x, c2z = _local(+b_half_w, +b_depth * 0.5, cx, cz)  # outer-R
+                c3x, c3z = _local(-b_half_w, +b_depth * 0.5, cx, cz)  # outer-L
+
+                y0 = floor2_y - b_thick * 0.5
+                y1 = floor2_y + b_thick * 0.5
+                p0_b = (c0x, y0, c0z); p1_b = (c1x, y0, c1z)
+                p2_b = (c2x, y0, c2z); p3_b = (c3x, y0, c3z)
+                p0_t = (c0x, y1, c0z); p1_t = (c1x, y1, c1z)
+                p2_t = (c2x, y1, c2z); p3_t = (c3x, y1, c3z)
+
+                # Slab faces: top, bottom, outer-front, two end caps.
+                _add_quad(p0_t, p1_t, p2_t, p3_t, (0.0, 1.0, 0.0))
+                _add_quad(p0_b, p3_b, p2_b, p1_b, (0.0, -1.0, 0.0))
+                _add_quad(p3_b, p3_t, p2_t, p2_b, n_out)
+                _add_quad(p0_b, p0_t, p3_t, p3_b, (-t_x, 0.0, -t_z))
+                _add_quad(p1_b, p2_b, p2_t, p1_t, ( t_x, 0.0,  t_z))
+
+                # --- Parapet wall on top of the slab -----------------
+                # Low stone railing wall 0.6 m tall × ~1.1 m × 5 cm thick,
+                # sitting on the slab flush with its outer edge and both
+                # end caps (U-shape open toward the building).
+                par_h = 0.60
+                par_t = 0.05
+                y2 = y1                        # bottom = slab top
+                y3 = y1 + par_h                # top of parapet
+                # Outer wall (perpendicular to building facade).
+                oa = _local(-b_half_w, +b_depth * 0.5 - par_t, cx, cz)
+                ob = _local(+b_half_w, +b_depth * 0.5 - par_t, cx, cz)
+                oc = _local(+b_half_w, +b_depth * 0.5,          cx, cz)
+                od = _local(-b_half_w, +b_depth * 0.5,          cx, cz)
+                oa_b = (oa[0], y2, oa[1]); oa_t = (oa[0], y3, oa[1])
+                ob_b = (ob[0], y2, ob[1]); ob_t = (ob[0], y3, ob[1])
+                oc_b = (oc[0], y2, oc[1]); oc_t = (oc[0], y3, oc[1])
+                od_b = (od[0], y2, od[1]); od_t = (od[0], y3, od[1])
+                _add_quad(oa_b, ob_b, ob_t, oa_t, (-n_x, 0.0, -n_z))  # inner
+                _add_quad(oc_b, od_b, od_t, oc_t, n_out)               # outer
+                _add_quad(oa_t, ob_t, oc_t, od_t, (0.0, 1.0, 0.0))     # top
+                _add_quad(ob_b, oc_b, oc_t, ob_t, ( t_x, 0.0,  t_z))   # right cap
+                _add_quad(od_b, oa_b, oa_t, od_t, (-t_x, 0.0, -t_z))   # left cap
+                # Left side-wall of parapet (short, from outer to inner edge).
+                la_l = _local(-b_half_w,           +b_depth * 0.5, cx, cz)
+                lb_l = _local(-b_half_w + par_t,   +b_depth * 0.5, cx, cz)
+                lc_l = _local(-b_half_w + par_t,   -b_depth * 0.5, cx, cz)
+                ld_l = _local(-b_half_w,           -b_depth * 0.5, cx, cz)
+                la_lb = (la_l[0], y2, la_l[1]); la_lt = (la_l[0], y3, la_l[1])
+                lb_lb = (lb_l[0], y2, lb_l[1]); lb_lt = (lb_l[0], y3, lb_l[1])
+                lc_lb = (lc_l[0], y2, lc_l[1]); lc_lt = (lc_l[0], y3, lc_l[1])
+                ld_lb = (ld_l[0], y2, ld_l[1]); ld_lt = (ld_l[0], y3, ld_l[1])
+                _add_quad(la_lb, ld_lb, ld_lt, la_lt, (-t_x, 0.0, -t_z))  # outer-side
+                _add_quad(lb_lb, lb_lt, lc_lt, lc_lb, ( t_x, 0.0,  t_z))  # inner-side
+                _add_quad(la_lt, ld_lt, lc_lt, lb_lt, (0.0, 1.0, 0.0))    # top
+                # Right side-wall of parapet (mirror of left).
+                ra_r = _local(+b_half_w - par_t,   +b_depth * 0.5, cx, cz)
+                rb_r = _local(+b_half_w,           +b_depth * 0.5, cx, cz)
+                rc_r = _local(+b_half_w,           -b_depth * 0.5, cx, cz)
+                rd_r = _local(+b_half_w - par_t,   -b_depth * 0.5, cx, cz)
+                ra_rb = (ra_r[0], y2, ra_r[1]); ra_rt = (ra_r[0], y3, ra_r[1])
+                rb_rb = (rb_r[0], y2, rb_r[1]); rb_rt = (rb_r[0], y3, rb_r[1])
+                rc_rb = (rc_r[0], y2, rc_r[1]); rc_rt = (rc_r[0], y3, rc_r[1])
+                rd_rb = (rd_r[0], y2, rd_r[1]); rd_rt = (rd_r[0], y3, rd_r[1])
+                _add_quad(rb_rb, rc_rb, rc_rt, rb_rt, ( t_x, 0.0,  t_z))  # outer-side
+                _add_quad(ra_rb, ra_rt, rd_rt, rd_rb, (-t_x, 0.0, -t_z))  # inner-side
+                _add_quad(ra_rt, rb_rt, rc_rt, rd_rt, (0.0, 1.0, 0.0))    # top
+
+                u += 3.2    # every other window
 
     if not tv:
         return (np.zeros((0, 3), dtype=np.float32),
@@ -658,13 +803,7 @@ def build(osm: OSMData, frame: Frame,
         roof_h = _roof_height(tags, wall_h, shape)
         cx, cy = poly.centroid.x, poly.centroid.y
         base_y = float(sampler.height_at(cx, cy))
-        ext = _extrude(poly, wall_h, roof_h, shape, base_y)
-        if ext is None:
-            return None
-        v, n, u, i, tv, tn, tu, ti = ext
-        rgba = _wall_colour(way_id)
-        colors = np.tile(np.array(rgba, dtype=np.float32), (len(v), 1))
-        return v, n, u, i, colors, tv, tn, tu, ti
+        return _extrude(poly, wall_h, roof_h, shape, base_y, way_id)
 
     for w in osm.filter_ways(lambda t: "building" in t or "building:part" in t):
         poly = polygon_from_way(w, frame)

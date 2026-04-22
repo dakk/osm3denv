@@ -170,25 +170,79 @@ vec3 brick_wall(vec2 uv) {
     return mix(bc, mortar_col, m);
 }
 
-// Emits ``glass`` in [0, 1] = 1 where the fragment is a glass pane (not
-// frame, not wall). Callers use this to bump glossiness for window panes.
+// Window opening + frame + flanking shutters. ``glass`` is set on the glass
+// pane only so the caller can bump glossiness. Ground-floor cells are
+// skipped so the door overlay can own them.
 vec3 windows(vec2 uv, vec3 wall_col, out float glass) {
     vec2 spacing = vec2(1.6, 3.0);
     vec2 size = vec2(0.9, 1.4);
+    vec2 shutter_size = vec2(0.22, 1.4);
+    float shutter_gap = 0.04;
     vec2 cell = floor(uv / spacing);
-    vec2 within = fract(uv / spacing) * spacing - (spacing - size) * 0.5;
-    float alive = step(0.5, cell.y);
-    bvec2 inside = bvec2(within.x > 0.0 && within.x < size.x,
-                          within.y > 0.0 && within.y < size.y);
+    vec2 within = fract(uv / spacing) * spacing - spacing * 0.5;
     glass = 0.0;
-    if (alive > 0.5 && inside.x && inside.y) {
+    float alive = step(0.5, cell.y);
+    if (alive <= 0.5) return wall_col;
+
+    vec2 d_win = abs(within) - size * 0.5;
+    if (d_win.x < 0.0 && d_win.y < 0.0) {
         float ws = hash21(cell);
         vec3 glass_col = mix(vec3(0.16, 0.20, 0.28), vec3(0.30, 0.38, 0.48), ws);
-        vec2 d_edge = min(within, size - within);
-        float frame = 1.0 - smoothstep(0.0, 0.05, min(d_edge.x, d_edge.y));
+        float frame = 1.0 - smoothstep(0.0, 0.05, min(-d_win.x, -d_win.y));
+        float mull_v = 1.0 - smoothstep(0.015, 0.030, abs(within.x));
+        float mull_h = 1.0 - smoothstep(0.015, 0.030, abs(within.y));
+        float all_frame = max(frame, max(mull_v, mull_h));
         vec3 frame_col = vec3(0.15, 0.12, 0.10);
-        glass = 1.0 - frame;   // pane only, frame stays matte
-        return mix(glass_col, frame_col, frame);
+        glass = 1.0 - all_frame;
+        return mix(glass_col, frame_col, all_frame);
+    }
+
+    // Lintel + sill (flat stone bands above/below the window opening).
+    if (within.y > size.y * 0.5 + 0.03 && within.y < size.y * 0.5 + 0.11 &&
+        abs(within.x) < size.x * 0.5 + 0.08) {
+        return vec3(0.84, 0.80, 0.72);
+    }
+    if (within.y < -size.y * 0.5 - 0.02 && within.y > -size.y * 0.5 - 0.12 &&
+        abs(within.x) < size.x * 0.5 + 0.10) {
+        return vec3(0.84, 0.80, 0.72);
+    }
+
+    if (abs(within.y) < size.y * 0.5) {
+        float sh_inner = size.x * 0.5 + shutter_gap;
+        float sh_outer = sh_inner + shutter_size.x;
+        if (abs(within.x) > sh_inner && abs(within.x) < sh_outer) {
+            float sh_seed = hash21(cell + vec2(13.7, 5.1));
+            vec3 col_a = vec3(0.22, 0.35, 0.22);
+            vec3 col_b = vec3(0.32, 0.20, 0.12);
+            vec3 col_c = vec3(0.20, 0.26, 0.32);
+            vec3 shutter_col = mix(col_a, col_b,
+                                   step(0.33, sh_seed) - step(0.66, sh_seed));
+            shutter_col = mix(shutter_col, col_c, step(0.66, sh_seed));
+            float louvre = fract(within.y * 10.0);
+            shutter_col *= mix(0.78, 1.05, smoothstep(0.25, 0.75, louvre));
+            return shutter_col;
+        }
+    }
+    return wall_col;
+}
+
+vec3 door(vec2 uv, vec3 wall_col, float door_u) {
+    if (door_u < 0.01) return wall_col;
+    float door_half_w = 0.55;
+    float door_h = 2.10;
+    float dx = uv.x - door_u;
+    if (abs(dx) < door_half_w && uv.y < door_h) {
+        vec2 d_local = vec2(abs(dx), uv.y);
+        vec3 door_col = vec3(0.22, 0.14, 0.08);
+        float panel_v = smoothstep(0.02, 0.0, abs(d_local.y - door_h * 0.5));
+        float panel_h = smoothstep(0.02, 0.0,
+                                   abs(d_local.x - door_half_w * 0.5));
+        door_col = mix(door_col, door_col * 0.6, max(panel_v, panel_h) * 0.8);
+        float frame_d = min(door_half_w - abs(dx),
+                            min(uv.y, door_h - uv.y));
+        float frame = 1.0 - smoothstep(0.0, 0.06, frame_d);
+        door_col = mix(door_col, vec3(0.10, 0.08, 0.06), frame);
+        return door_col;
     }
     return wall_col;
 }
@@ -224,6 +278,9 @@ void main() {
         // Per-building palette tint — each building seeds a unique warm
         // residential colour via vertex colour; glass panes stay unaffected.
         base = mix(base * v_color.rgb, base, glass);
+        // Door overlay on the designated wall edge (v_color.a carries the
+        // door-centre UV running length; 0 everywhere else).
+        base = door(v_uv, base, v_color.a);
         // Brick matte (0.88) → glass glossy (0.12). Frames stay matte via glass=0.
         roughness = mix(0.88, 0.12, glass);
     }

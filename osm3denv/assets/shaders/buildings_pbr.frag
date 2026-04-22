@@ -180,24 +180,97 @@ vec3 roof_pattern(vec2 uv) {
     return c;
 }
 
-// Same window overlay as buildings.frag — returns (color, glass_mask).
+// Procedural window overlay: window opening + frame + flanking shutters.
+// Returns the composited wall colour and sets ``glass`` ≥ 0 where the
+// fragment is inside an actual glass pane (so the caller can bump its
+// roughness / AO). Ground-floor cells (cell.y == 0) are left empty so the
+// door overlay can claim them in main().
 vec3 windows(vec2 uv, vec3 wall_col, out float glass) {
     vec2 spacing = vec2(1.6, 3.0);
     vec2 size = vec2(0.9, 1.4);
+    vec2 shutter_size = vec2(0.22, 1.4);
+    float shutter_gap = 0.04;
     vec2 cell = floor(uv / spacing);
-    vec2 within = fract(uv / spacing) * spacing - (spacing - size) * 0.5;
-    float alive = step(0.5, cell.y);
-    bvec2 inside = bvec2(within.x > 0.0 && within.x < size.x,
-                          within.y > 0.0 && within.y < size.y);
+    vec2 within = fract(uv / spacing) * spacing - spacing * 0.5; // centred
     glass = 0.0;
-    if (alive > 0.5 && inside.x && inside.y) {
+    float alive = step(0.5, cell.y);
+    if (alive <= 0.5) return wall_col;
+
+    // --- Window opening (centred on (0, 0)) ---------------------------
+    vec2 d_win = abs(within) - size * 0.5;
+    if (d_win.x < 0.0 && d_win.y < 0.0) {
         float ws = hash21(cell);
         vec3 glass_col = mix(vec3(0.16, 0.20, 0.28), vec3(0.30, 0.38, 0.48), ws);
-        vec2 d_edge = min(within, size - within);
-        float frame = 1.0 - smoothstep(0.0, 0.05, min(d_edge.x, d_edge.y));
+        // Outer frame + cross mullions (one vertical, one horizontal) that
+        // divide the pane into quarters like a real casement window.
+        float frame = 1.0 - smoothstep(0.0, 0.05, min(-d_win.x, -d_win.y));
+        float mull_v = 1.0 - smoothstep(0.015, 0.030, abs(within.x));
+        float mull_h = 1.0 - smoothstep(0.015, 0.030, abs(within.y));
+        float all_frame = max(frame, max(mull_v, mull_h));
         vec3 frame_col = vec3(0.15, 0.12, 0.10);
-        glass = 1.0 - frame;
-        return mix(glass_col, frame_col, frame);
+        glass = 1.0 - all_frame;
+        return mix(glass_col, frame_col, all_frame);
+    }
+
+    // --- Stone lintel above the window -------------------------------
+    if (within.y > size.y * 0.5 + 0.03 && within.y < size.y * 0.5 + 0.11 &&
+        abs(within.x) < size.x * 0.5 + 0.08) {
+        return vec3(0.84, 0.80, 0.72);
+    }
+    // --- Stone sill just below the window ----------------------------
+    if (within.y < -size.y * 0.5 - 0.02 && within.y > -size.y * 0.5 - 0.12 &&
+        abs(within.x) < size.x * 0.5 + 0.10) {
+        return vec3(0.84, 0.80, 0.72);
+    }
+
+    // --- Shutters flanking the window --------------------------------
+    // Both shutters occupy the same vertical range as the window opening.
+    if (abs(within.y) < size.y * 0.5) {
+        float sh_inner = size.x * 0.5 + shutter_gap;
+        float sh_outer = sh_inner + shutter_size.x;
+        if (abs(within.x) > sh_inner && abs(within.x) < sh_outer) {
+            // Per-cell shutter colour: Mediterranean dark-green, brown or
+            // blue-grey. Louvre pattern adds subtle horizontal lines.
+            float sh_seed = hash21(cell + vec2(13.7, 5.1));
+            vec3 col_a = vec3(0.22, 0.35, 0.22);   // forest green
+            vec3 col_b = vec3(0.32, 0.20, 0.12);   // dark walnut
+            vec3 col_c = vec3(0.20, 0.26, 0.32);   // slate blue
+            vec3 shutter_col = mix(col_a, col_b,
+                                   step(0.33, sh_seed) - step(0.66, sh_seed));
+            shutter_col = mix(shutter_col, col_c, step(0.66, sh_seed));
+            float louvre = fract(within.y * 10.0);
+            shutter_col *= mix(0.78, 1.05,
+                               smoothstep(0.25, 0.75, louvre));
+            return shutter_col;
+        }
+    }
+    return wall_col;
+}
+
+// Procedural front door. Returns wall_col untouched unless the fragment
+// lies inside the door rectangle on the designated door edge, indicated by
+// a non-zero v_color.a carrying the door-centre running-length UV position.
+vec3 door(vec2 uv, vec3 wall_col, float door_u) {
+    if (door_u < 0.01) return wall_col;
+    float door_half_w = 0.55;    // 1.1 m wide
+    float door_h = 2.10;         // 2.1 m tall
+    float dx = uv.x - door_u;
+    if (abs(dx) < door_half_w && uv.y < door_h) {
+        vec2 d_local = vec2(abs(dx), uv.y);
+        // Dark wood door with brass-ish handle notch.
+        vec3 door_col = vec3(0.22, 0.14, 0.08);
+        // Panel lines at door/2 height + horizontal rule.
+        float panel_v = smoothstep(0.02, 0.0,
+                                   abs(d_local.y - door_h * 0.5));
+        float panel_h = smoothstep(0.02, 0.0,
+                                   abs(d_local.x - door_half_w * 0.5));
+        door_col = mix(door_col, door_col * 0.6, max(panel_v, panel_h) * 0.8);
+        // Frame around the opening.
+        float frame_d = min(door_half_w - abs(dx),
+                            min(uv.y, door_h - uv.y));
+        float frame = 1.0 - smoothstep(0.0, 0.06, frame_d);
+        door_col = mix(door_col, vec3(0.10, 0.08, 0.06), frame);
+        return door_col;
     }
     return wall_col;
 }
@@ -263,6 +336,14 @@ void main() {
             roughness = mix(roughness, 0.12, glass);
             ao = mix(ao, 1.0, glass);
             N = mix(N, N_geo, glass);
+        }
+        // Front door on the designated wall edge (v_color.a carries its
+        // running-length UV centre; 0 on non-door edges).
+        vec3 pre_door = albedo;
+        albedo = door(v_uv, albedo, v_color.a);
+        if (albedo != pre_door) {
+            roughness = 0.60;
+            N = N_geo;
         }
     }
 
