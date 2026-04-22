@@ -35,6 +35,15 @@ _WATER_AREA_TAGS = {
 
 _RIVER_LINE_VALUES = {"river", "stream", "canal", "ditch", "drain"}
 
+# Default half-widths (metres) when no OSM `width` tag is present.
+_RIVER_HALF_WIDTH: dict[str, float] = {
+    "river":  12.0,
+    "canal":   8.0,
+    "stream":  3.0,
+    "ditch":   1.5,
+    "drain":   1.5,
+}
+
 
 def _is_water_area(tags: dict) -> bool:
     return any(tags.get(k) == v for k, v in _WATER_AREA_TAGS)
@@ -42,6 +51,16 @@ def _is_water_area(tags: dict) -> bool:
 
 def _is_river_line(tags: dict) -> bool:
     return tags.get("waterway") in _RIVER_LINE_VALUES
+
+
+def _river_half_width(tags: dict) -> float:
+    raw = tags.get("width")
+    if raw is not None:
+        try:
+            return float(raw) / 2.0
+        except ValueError:
+            pass
+    return _RIVER_HALF_WIDTH.get(tags.get("waterway", "stream"), 3.0)
 
 
 def _to_enu(lons, lats, frame: Frame) -> np.ndarray:
@@ -141,60 +160,68 @@ def build(osm: OSMData, frame: Frame, radius_m: float,
         _add_polygon(poly, heightmap, grid, radius_m, bbox, lake_polygons)
 
     # ------------------------------------------------------------------
-    # River / stream / canal centre-lines
+    # River / stream / canal — buffered into polygons.
+    # Width comes from the OSM `width` tag when present, otherwise from
+    # type-based defaults.  Surface z is sampled from the centreline so
+    # the polygon sits at the correct terrain elevation.
     # ------------------------------------------------------------------
-    river_polylines: list[np.ndarray] = []
+    n_rivers = 0
     for way in osm.filter_ways(_is_river_line):
         geom = way.geometry
         if len(geom) < 2:
             continue
         pts = _to_enu([g[0] for g in geom], [g[1] for g in geom], frame)
+        half_w = _river_half_width(way.tags)
+        try:
+            poly = sg.LineString(pts).buffer(half_w, cap_style=2)
+            if not poly.is_valid:
+                poly = poly.buffer(0)
+        except Exception:
+            continue
+        # z from centreline points inside the bbox (more accurate than
+        # the buffer exterior, which includes perpendicular offsets).
         inside = (np.abs(pts[:, 0]) <= r) & (np.abs(pts[:, 1]) <= r)
-        segment: list[list[float]] = []
-        for i in range(len(pts)):
-            if inside[i]:
-                x, y = float(pts[i, 0]), float(pts[i, 1])
-                z = sample_z(x, y, heightmap, grid, radius_m) + 0.3
-                segment.append([x, y, z])
-            elif segment:
-                if len(segment) >= 2:
-                    river_polylines.append(np.array(segment, dtype=np.float32))
-                segment = []
-        if len(segment) >= 2:
-            river_polylines.append(np.array(segment, dtype=np.float32))
+        centre = pts[inside]
+        if len(centre) == 0:
+            continue
+        z = float(np.mean([
+            sample_z(float(p[0]), float(p[1]), heightmap, grid, radius_m)
+            for p in centre
+        ])) + 0.15
+        try:
+            clipped = poly.intersection(bbox)
+        except Exception:
+            continue
+        if clipped.is_empty or clipped.geom_type not in ("Polygon", "MultiPolygon"):
+            continue
+        if clipped.area < 1.0:
+            continue
+        lake_polygons.append((clipped, z))
+        n_rivers += 1
 
-    log.info("water: %d lake/pond polygons, %d river/stream segments",
-             len(lake_polygons), len(river_polylines))
+    log.info("water: %d lake/pond polygons, %d river/stream polygons",
+             len(lake_polygons) - n_rivers, n_rivers)
 
-    layers: list[RenderLayer] = []
+    if not lake_polygons:
+        return []
 
-    if lake_polygons:
-        all_tris: list[list[tuple]] = []
-        for poly, surface_z in lake_polygons:
-            max_seg = max(30.0, poly.area ** 0.5 / 20.0)
-            for tri_coords in triangulate_flat_poly(poly, max_seg):
-                all_tris.append([(x, y, surface_z) for (x, y) in tri_coords])
-        if all_tris:
-            verts = np.array(all_tris, dtype=np.float32).reshape(-1, 3)
-            norms = np.zeros_like(verts)
-            norms[:, 2] = 1.0
-            layers.append(RenderLayer(
-                name="water_lakes",
-                vertices=verts,
-                normals=norms,
-                color=(0.15, 0.40, 0.65, 1.0),
-                depth_offset=2,
-                two_sided=True,
-                shader_name="lake",
-            ))
+    all_tris: list[list[tuple]] = []
+    for poly, surface_z in lake_polygons:
+        max_seg = max(10.0, poly.area ** 0.5 / 20.0)
+        for tri_coords in triangulate_flat_poly(poly, max_seg):
+            all_tris.append([(x, y, surface_z) for (x, y) in tri_coords])
 
-    if river_polylines:
-        layers.append(RenderLayer(
-            name="water_rivers",
-            polylines=river_polylines,
-            line_thickness=2.0,
-            color=(0.15, 0.45, 0.75, 1.0),
-            lit=False,
-        ))
+    if not all_tris:
+        return []
 
-    return layers
+    verts = np.array(all_tris, dtype=np.float32).reshape(-1, 3)
+    norms = np.zeros_like(verts)
+    norms[:, 2] = 1.0
+    return [RenderLayer(
+        name="water",
+        vertices=verts,
+        normals=norms,
+        depth_offset=2,
+        two_sided=True,
+        shader_name="lake",
+    )]
