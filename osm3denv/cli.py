@@ -25,8 +25,11 @@ log = logging.getLogger("osm3denv")
               help="Download data and build caches, then exit without rendering.")
 @click.option("--refresh-cache", is_flag=True,
               help="Ignore cached SRTM/OSM data for this run and re-download.")
+@click.option("--dem-zoom", type=click.IntRange(10, 15), default=None, show_default=True,
+              help="Terrarium tile zoom level (10-15). Auto-selected if omitted; "
+                   "use 15 for ~4.5 m/px, 14 for ~9 m/px.")
 @click.option("-v", "--verbose", count=True, help="Increase log verbosity (-v, -vv).")
-def main(lat, lon, radius_m, grid, cache_dir, fetch_only, refresh_cache, verbose):
+def main(lat, lon, radius_m, grid, cache_dir, fetch_only, refresh_cache, dem_zoom, verbose):
     """Render a 3D terrain around (lat, lon) from SRTM and cache OSM data."""
     _logging.configure(verbose)
 
@@ -39,6 +42,7 @@ def main(lat, lon, radius_m, grid, cache_dir, fetch_only, refresh_cache, verbose
         cache_dir=cache_dir or default_cache_dir(),
         fetch_only=fetch_only,
         refresh_cache=refresh_cache,
+        dem_zoom=dem_zoom,
     )
     cfg.cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -51,7 +55,7 @@ def main(lat, lon, radius_m, grid, cache_dir, fetch_only, refresh_cache, verbose
 
 def run(cfg: Config, frame) -> None:
     from osm3denv.fetch import osm as osm_fetch
-    from osm3denv.fetch import srtm as srtm_fetch
+    from osm3denv.fetch import terrarium as dem_fetch
     from osm3denv.layer import RenderLayer
     from osm3denv.mesh import coastline as coastline_mesh
     from osm3denv.mesh import sea as sea_mesh
@@ -74,7 +78,8 @@ def run(cfg: Config, frame) -> None:
 
     terrain = terrain_mesh.build(
         frame=frame, radius_m=cfg.radius_m, grid=cfg.grid,
-        hgt_loader=srtm_fetch.loader(cfg.srtm_cache, refresh=cfg.refresh_cache),
+        hgt_loader=dem_fetch.loader(cfg.srtm_cache, zoom=cfg.dem_zoom,
+                                    refresh=cfg.refresh_cache),
         sea_polygon=sea_polygon,
     )
     log.info("terrain: %d verts, %d tris, h=[%.1f..%.1f]",
@@ -108,7 +113,7 @@ def run(cfg: Config, frame) -> None:
         return
 
     from osm3denv.render.app import run_viewer
-    run_viewer(terrain, layers=layers)
+    run_viewer(terrain, layers=layers, frame=frame)
 
 
 if __name__ == "__main__":

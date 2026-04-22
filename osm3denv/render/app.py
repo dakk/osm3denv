@@ -133,8 +133,11 @@ class TerrainViewer(ShowBase):
     MOVE_KEYS = ("w", "a", "s", "d", "q", "e")
 
     def __init__(self, terrain: TerrainData,
-                 layers: list[RenderLayer] | None = None):
+                 layers: list[RenderLayer] | None = None,
+                 frame=None):
         ShowBase.__init__(self)
+        self._frame = frame
+        self._origin_alt_m = float(terrain.origin_alt_m)
 
         props = WindowProperties()
         props.setTitle("osm3denv — terrain")
@@ -195,6 +198,12 @@ class TerrainViewer(ShowBase):
         )
         self._refresh_speed_text()
 
+        self.pos_text = OnscreenText(
+            text="", pos=(-1.3, 0.95), scale=0.04,
+            fg=(1, 1, 1, 0.9), bg=(0, 0, 0, 0.4),
+            align=TextNode.ALeft, mayChange=True,
+        )
+
         self.taskMgr.add(self._update, "camera_update")
 
     def _set_key(self, k: str, v: bool) -> None:
@@ -251,9 +260,21 @@ class TerrainViewer(ShowBase):
             speed = self.move_speed * (4.0 if self.shift_held else 1.0)
             self.camera.setPos(self.camera.getPos() + move * speed * dt)
 
+        if self._frame is not None:
+            pos = self.camera.getPos()
+            lon_arr, lat_arr = self._frame.to_ll(
+                np.array([pos.x], dtype=np.float64),
+                np.array([pos.y], dtype=np.float64),
+            )
+            alt = pos.z + self._origin_alt_m
+            self.pos_text.setText(
+                f"lat {lat_arr[0]:.6f}°  lon {lon_arr[0]:.6f}°  alt {alt:.0f} m"
+            )
+
         return Task.cont
 
 
 def run_viewer(terrain: TerrainData,
-               layers: list[RenderLayer] | None = None) -> None:
-    TerrainViewer(terrain, layers=layers).run()
+               layers: list[RenderLayer] | None = None,
+               frame=None) -> None:
+    TerrainViewer(terrain, layers=layers, frame=frame).run()

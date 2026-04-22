@@ -13,6 +13,7 @@ class Config:
     cache_dir: Path
     fetch_only: bool
     refresh_cache: bool
+    dem_zoom: int | None = None   # None = auto-select per terrain step size
 
     @property
     def srtm_cache(self) -> Path:
