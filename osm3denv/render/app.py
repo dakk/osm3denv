@@ -38,6 +38,7 @@ from direct.gui.OnscreenText import OnscreenText
 
 from osm3denv.mesh.coastline import CoastlineData
 from osm3denv.mesh.terrain import TerrainData
+from osm3denv.mesh.water import WaterData
 
 log = logging.getLogger(__name__)
 
@@ -76,41 +77,37 @@ def _build_terrain_node(terrain: TerrainData) -> GeomNode:
     return node
 
 
-def _sea_tris_inner(sea_polygon, radius_m: float) -> list[list[tuple[float, float]]]:
-    """Triangulate the sea polygon within the terrain bbox.
+def _triangulate_flat_poly(poly, max_seg: float) -> list[list[tuple[float, float]]]:
+    """Densify *poly*, Delaunay-triangulate it, return CCW (x,y) triples.
 
-    Uses Shapely Delaunay with two key fixes for concave coastlines:
-    * segmentize() densifies long edges so the triangulation doesn't skip
-      concave pockets.
-    * covers() (not contains()) accepts centroids that land exactly on a
-      boundary edge, preventing spurious gaps.
+    Two robustness fixes vs plain delaunay_triangles():
+    * segmentize() prevents triangles that jump across concave pockets.
+    * covers() (not contains()) keeps triangles whose centroid sits exactly
+      on a boundary edge.
     """
     import shapely
-    import shapely.geometry as sg
-
-    inner_sea = sea_polygon.intersection(sg.box(-radius_m, -radius_m, radius_m, radius_m))
-    if inner_sea.is_empty:
-        return []
-
-    # Densify: add vertices every ~radius/30 metres along long edges so that
-    # Delaunay can't produce triangles that span concavities.
-    max_seg = max(30.0, radius_m / 30.0)
-    densified = inner_sea.segmentize(max_seg)
-
-    tris_geom = shapely.delaunay_triangles(densified)
+    densified = poly.segmentize(max_seg)
     result = []
-    for tri in tris_geom.geoms:
-        if not inner_sea.covers(tri.centroid):   # covers() includes the boundary
+    for tri in shapely.delaunay_triangles(densified).geoms:
+        if not poly.covers(tri.centroid):
             continue
         coords = list(tri.exterior.coords)[:-1]
         if len(coords) != 3:
             continue
         (x0, y0), (x1, y1), (x2, y2) = coords
-        # Enforce CCW winding viewed from +z.
         if (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0) < 0:
             coords = [coords[0], coords[2], coords[1]]
         result.append(coords)
     return result
+
+
+def _sea_tris_inner(sea_polygon, radius_m: float) -> list[list[tuple[float, float]]]:
+    """Triangulate the sea polygon clipped to the terrain bbox."""
+    import shapely.geometry as sg
+    inner_sea = sea_polygon.intersection(sg.box(-radius_m, -radius_m, radius_m, radius_m))
+    if inner_sea.is_empty:
+        return []
+    return _triangulate_flat_poly(inner_sea, max_seg=max(30.0, radius_m / 30.0))
 
 
 def _sea_tris_outer(radius_m: float, extent: float) -> list[list[tuple[float, float]]]:
@@ -184,6 +181,51 @@ def _build_sea_node(sea_z: float, extent: float,
     return node
 
 
+def _build_water_poly_node(water: WaterData) -> GeomNode | None:
+    """Flat polygon mesh for lakes, ponds, and river-bank areas."""
+    if not water.lake_polygons:
+        return None
+    vfmt = GeomVertexFormat.getV3n3()
+    vdata = GeomVertexData("water_poly", vfmt, Geom.UHStatic)
+    vw = GeomVertexWriter(vdata, "vertex")
+    nw = GeomVertexWriter(vdata, "normal")
+    prim = GeomTriangles(Geom.UHStatic)
+    vi = 0
+    for poly, surface_z in water.lake_polygons:
+        # Proportional max_seg: fine for small ponds, coarser for big lakes.
+        max_seg = max(30.0, poly.area ** 0.5 / 20.0)
+        for tri_coords in _triangulate_flat_poly(poly, max_seg):
+            for (x, y) in tri_coords:
+                vw.addData3(float(x), float(y), float(surface_z))
+                nw.addData3(0.0, 0.0, 1.0)
+            prim.addVertices(vi, vi + 1, vi + 2)
+            vi += 3
+    if vi == 0:
+        return None
+    vdata.setNumRows(vi)
+    prim.closePrimitive()
+    geom = Geom(vdata)
+    geom.addPrimitive(prim)
+    node = GeomNode("water_poly")
+    node.addGeom(geom)
+    node.setAttrib(DepthOffsetAttrib.make(2))
+    return node
+
+
+def _build_water_river_node(water: WaterData) -> GeomNode | None:
+    """Terrain-following polylines for rivers, streams, and canals."""
+    if not water.rivers:
+        return None
+    ls = LineSegs("rivers")
+    ls.setColor(0.15, 0.45, 0.75, 1.0)
+    ls.setThickness(2.0)
+    for river in water.rivers:
+        ls.moveTo(float(river[0, 0]), float(river[0, 1]), float(river[0, 2]))
+        for pt in river[1:]:
+            ls.drawTo(float(pt[0]), float(pt[1]), float(pt[2]))
+    return ls.create()
+
+
 def _build_coastline_node(coast: CoastlineData, z: float) -> GeomNode | None:
     if not coast.polylines:
         return None
@@ -203,7 +245,8 @@ class TerrainViewer(ShowBase):
     def __init__(self, terrain: TerrainData,
                  coastline: CoastlineData | None = None,
                  sea_z: float | None = None,
-                 sea_polygon=None):
+                 sea_polygon=None,
+                 water: WaterData | None = None):
         ShowBase.__init__(self)
 
         props = WindowProperties()
@@ -217,6 +260,18 @@ class TerrainViewer(ShowBase):
         terrain_np.setColor(Vec4(0.45, 0.55, 0.35, 1.0))
 
         r = float(terrain.radius_m)
+
+        if water is not None:
+            water_poly_node = _build_water_poly_node(water)
+            if water_poly_node is not None:
+                water_poly_np = self.render.attachNewNode(water_poly_node)
+                water_poly_np.setColor(Vec4(0.15, 0.40, 0.65, 1.0))
+                water_poly_np.setTwoSided(True)
+            water_river_node = _build_water_river_node(water)
+            if water_river_node is not None:
+                water_river_np = self.render.attachNewNode(water_river_node)
+                water_river_np.setLightOff()
+
         if sea_z is not None:
             sea_np = self.render.attachNewNode(
                 _build_sea_node(sea_z, extent=r * 20.0,
@@ -341,6 +396,7 @@ class TerrainViewer(ShowBase):
 def run_viewer(terrain: TerrainData,
                coastline: CoastlineData | None = None,
                sea_z: float | None = None,
-               sea_polygon=None) -> None:
+               sea_polygon=None,
+               water: WaterData | None = None) -> None:
     TerrainViewer(terrain, coastline=coastline, sea_z=sea_z,
-                  sea_polygon=sea_polygon).run()
+                  sea_polygon=sea_polygon, water=water).run()

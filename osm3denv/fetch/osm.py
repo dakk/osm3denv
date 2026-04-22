@@ -71,6 +71,11 @@ def _build_query(bbox_ll: tuple[float, float, float, float]) -> str:
   way["highway"]({bb});
   way["natural"="water"]({bb});
   way["natural"="coastline"]({bb});
+  way["waterway"~"river|stream|canal|ditch|drain"]({bb});
+  way["waterway"="riverbank"]({bb});
+  way["landuse"="reservoir"]({bb});
+  relation["natural"="water"]({bb});
+  relation["waterway"="riverbank"]({bb});
 );
 out geom;
 """
@@ -132,7 +137,11 @@ def fetch(*, frame: Frame, radius_m: float, cache_dir: Path,
           ttl_days: int = 7, refresh: bool = False) -> OSMData:
     bbox = frame.bbox_ll(radius_m)
     key = bbox_key(bbox)
-    path = cache_dir / f"{key}.json"
+    # Include a short hash of the query in the filename so that adding new
+    # tags (which changes the query) automatically invalidates old caches.
+    import hashlib as _hashlib
+    q_hash = _hashlib.sha1(_build_query(bbox).encode()).hexdigest()[:8]
+    path = cache_dir / f"{key}_{q_hash}.json"
     if not refresh:
         cached = read_json(path, max_age_s=ttl_days * 86400)
         if cached is not None:

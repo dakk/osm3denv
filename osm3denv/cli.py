@@ -55,6 +55,7 @@ def run(cfg: Config, frame) -> None:
     from osm3denv.mesh import coastline as coastline_mesh
     from osm3denv.mesh import sea as sea_mesh
     from osm3denv.mesh import terrain as terrain_mesh
+    from osm3denv.mesh import water as water_mesh
 
     osm_data = osm_fetch.fetch(frame=frame, radius_m=cfg.radius_m,
                                cache_dir=cfg.osm_cache,
@@ -84,6 +85,11 @@ def run(cfg: Config, frame) -> None:
              len(coastline.polylines),
              sum(len(p) for p in coastline.polylines))
 
+    water = water_mesh.build(osm_data, frame, cfg.radius_m,
+                             terrain.heightmap, terrain.origin_alt_m)
+    log.info("water: %d lake polygons, %d river segments",
+             len(water.lake_polygons), len(water.rivers))
+
     if cfg.fetch_only:
         log.info("fetch-only: done.")
         return
@@ -92,7 +98,8 @@ def run(cfg: Config, frame) -> None:
     # cells near 0 m) does not Z-fight the plane at the coast.
     sea_z = -terrain.origin_alt_m - 0.3
     from osm3denv.render.app import run_viewer
-    run_viewer(terrain, coastline=coastline, sea_z=sea_z, sea_polygon=sea_polygon)
+    run_viewer(terrain, coastline=coastline, sea_z=sea_z,
+               sea_polygon=sea_polygon, water=water)
 
 
 if __name__ == "__main__":
