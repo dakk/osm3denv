@@ -1,11 +1,11 @@
-"""Minimal Panda3D viewer for a terrain scene.
+"""Panda3D viewer.
 
 Controls
 --------
-* **W / A / S / D** — move forward / left / back / right (along camera heading, ground plane).
-* **Q / E** — move down / up (world Z).
+* **W / A / S / D** — move forward / left / back / right.
+* **Q / E** — move down / up.
 * **Shift** — sprint (x4 speed).
-* **Hold right mouse button** — drag to look around.
+* **Right-drag** — look around.
 * **Mouse wheel** — cycle move speed.
 * **Escape** — quit.
 """
@@ -16,137 +16,37 @@ import math
 import sys
 
 import numpy as np
+from direct.gui.OnscreenText import OnscreenText
 from direct.showbase.ShowBase import ShowBase
 from direct.task import Task
 from panda3d.core import (
-    AmbientLight,
-    DepthOffsetAttrib,
-    DirectionalLight,
-    Geom,
-    GeomNode,
-    GeomTriangles,
-    GeomVertexData,
-    GeomVertexFormat,
-    GeomVertexWriter,
-    LineSegs,
-    LVector3,
-    TextNode,
-    Vec4,
-    WindowProperties,
+    AmbientLight, DirectionalLight,
+    LVector3, TextNode, Vec4, WindowProperties,
 )
-from direct.gui.OnscreenText import OnscreenText
 
-from pathlib import Path
-
-from osm3denv.layer import RenderLayer
-from osm3denv.mesh.terrain import TerrainData
+from osm3denv.entity import MapEntity
+from osm3denv.entities.terrain import Terrain
 
 log = logging.getLogger(__name__)
-
-_SHADER_DIR = Path(__file__).parent / "shaders"
-_shader_cache: dict = {}
-
-
-def _load_shader(name: str):
-    if name in _shader_cache:
-        return _shader_cache[name]
-    from panda3d.core import Shader
-    vert = _SHADER_DIR / f"{name}.vert"
-    frag = _SHADER_DIR / f"{name}.frag"
-    if not vert.exists() or not frag.exists():
-        log.warning("shader '%s' not found in %s", name, _SHADER_DIR)
-        return None
-    shader = Shader.load(Shader.SL_GLSL, vertex=str(vert), fragment=str(frag))
-    _shader_cache[name] = shader
-    return shader
-
-
-def _layer_to_np(layer: RenderLayer, parent) -> None:
-    """Attach a RenderLayer to *parent* as one or two Panda3D nodes."""
-    if layer.vertices is not None and layer.normals is not None:
-        has_uvs = layer.uvs is not None
-        vfmt = GeomVertexFormat.getV3n3t2() if has_uvs else GeomVertexFormat.getV3n3()
-        vdata = GeomVertexData(layer.name, vfmt, Geom.UHStatic)
-        n = len(layer.vertices)
-        vdata.setNumRows(n)
-
-        vwriter = GeomVertexWriter(vdata, "vertex")
-        nwriter = GeomVertexWriter(vdata, "normal")
-        if has_uvs:
-            twriter = GeomVertexWriter(vdata, "texcoord")
-
-        verts = layer.vertices
-        norms = layer.normals
-        for i in range(n):
-            vwriter.addData3(float(verts[i, 0]), float(verts[i, 1]), float(verts[i, 2]))
-            nwriter.addData3(float(norms[i, 0]), float(norms[i, 1]), float(norms[i, 2]))
-            if has_uvs:
-                twriter.addData2(float(layer.uvs[i, 0]), float(layer.uvs[i, 1]))
-
-        prim = GeomTriangles(Geom.UHStatic)
-        if layer.indices is not None:
-            idx = np.asarray(layer.indices, dtype=np.uint32).reshape(-1, 3)
-            for a, b, c in idx:
-                prim.addVertices(int(a), int(b), int(c))
-        else:
-            for i in range(0, n, 3):
-                prim.addVertices(i, i + 1, i + 2)
-        prim.closePrimitive()
-
-        geom = Geom(vdata)
-        geom.addPrimitive(prim)
-        geom_node = GeomNode(layer.name)
-        geom_node.addGeom(geom)
-        if layer.depth_offset:
-            geom_node.setAttrib(DepthOffsetAttrib.make(layer.depth_offset))
-
-        mesh_np = parent.attachNewNode(geom_node)
-        if layer.shader_name is not None:
-            shader = _load_shader(layer.shader_name)
-            if shader is not None:
-                mesh_np.setShader(shader)
-                for uname, uval in layer.shader_inputs.items():
-                    mesh_np.setShaderInput(uname, uval)
-        else:
-            mesh_np.setColor(Vec4(*layer.color))
-            if not layer.lit:
-                mesh_np.setLightOff()
-        if layer.two_sided:
-            mesh_np.setTwoSided(True)
-
-    if layer.polylines is not None:
-        ls = LineSegs(layer.name + "_lines")
-        ls.setColor(*layer.color)
-        ls.setThickness(layer.line_thickness)
-        for polyline in layer.polylines:
-            if len(polyline) < 2:
-                continue
-            ls.moveTo(float(polyline[0, 0]), float(polyline[0, 1]), float(polyline[0, 2]))
-            for pt in polyline[1:]:
-                ls.drawTo(float(pt[0]), float(pt[1]), float(pt[2]))
-        line_np = parent.attachNewNode(ls.create())
-        if not layer.lit:
-            line_np.setLightOff()
 
 
 class TerrainViewer(ShowBase):
     MOVE_KEYS = ("w", "a", "s", "d", "q", "e")
 
-    def __init__(self, terrain: TerrainData,
-                 layers: list[RenderLayer] | None = None,
-                 frame=None):
+    def __init__(self, terrain: Terrain,
+                 entities: list[MapEntity] | None = None,
+                 frame=None) -> None:
         ShowBase.__init__(self)
         self._frame = frame
-        self._origin_alt_m = float(terrain.origin_alt_m)
+        self._origin_alt_m = float(terrain.data.origin_alt_m)
 
         props = WindowProperties()
         props.setTitle("osm3denv — terrain")
         self.win.requestProperties(props)
-
         self.setBackgroundColor(0.53, 0.70, 0.86, 1.0)
 
-        for layer in (layers or []):
-            _layer_to_np(layer, self.render)
+        for entity in (entities or []):
+            entity.attach_to(self.render)
 
         ambient = AmbientLight("ambient")
         ambient.setColor(Vec4(0.35, 0.35, 0.40, 1.0))
@@ -158,7 +58,7 @@ class TerrainViewer(ShowBase):
         sun_np.setHpr(-30, -50, 0)
         self.render.setLight(sun_np)
 
-        r = float(terrain.radius_m)
+        r = float(terrain.data.radius_m)
         self.disableMouse()
         self.camera.setPos(0.0, -r * 1.5, r * 0.8)
         self.heading = 0.0
@@ -174,15 +74,15 @@ class TerrainViewer(ShowBase):
         for k in self.MOVE_KEYS:
             self.accept(k, self._set_key, [k, True])
             self.accept(k + "-up", self._set_key, [k, False])
-        self.accept("shift", self._set_shift, [True])
+        self.accept("shift",    self._set_shift, [True])
         self.accept("shift-up", self._set_shift, [False])
-        self.accept("wheel_up", self._bump_speed, [1.25])
+        self.accept("wheel_up",   self._bump_speed, [1.25])
         self.accept("wheel_down", self._bump_speed, [0.8])
         self.accept("escape", sys.exit)
 
         self.looking = False
         self._last_mouse: tuple[float, float] | None = None
-        self.accept("mouse3", self._start_look)
+        self.accept("mouse3",    self._start_look)
         self.accept("mouse3-up", self._stop_look)
 
         OnscreenText(
@@ -206,11 +106,8 @@ class TerrainViewer(ShowBase):
 
         self.taskMgr.add(self._update, "camera_update")
 
-    def _set_key(self, k: str, v: bool) -> None:
-        self.keys[k] = v
-
-    def _set_shift(self, v: bool) -> None:
-        self.shift_held = v
+    def _set_key(self, k: str, v: bool) -> None:   self.keys[k] = v
+    def _set_shift(self, v: bool) -> None:          self.shift_held = v
 
     def _bump_speed(self, factor: float) -> None:
         self.move_speed = max(1.0, min(10_000.0, self.move_speed * factor))
@@ -230,7 +127,7 @@ class TerrainViewer(ShowBase):
         self._last_mouse = None
 
     def _update(self, task: Task.Task) -> int:
-        dt = globalClock.getDt()  # noqa: F821 — panda3d injects globalClock
+        dt = globalClock.getDt()  # noqa: F821
 
         if self.looking and self.mouseWatcherNode.hasMouse():
             m = self.mouseWatcherNode.getMouse()
@@ -244,8 +141,8 @@ class TerrainViewer(ShowBase):
 
         h = math.radians(self.heading)
         forward = LVector3(-math.sin(h), math.cos(h), 0.0)
-        right = LVector3(math.cos(h), math.sin(h), 0.0)
-        up = LVector3(0.0, 0.0, 1.0)
+        right   = LVector3( math.cos(h), math.sin(h), 0.0)
+        up      = LVector3(0.0, 0.0, 1.0)
 
         move = LVector3(0.0, 0.0, 0.0)
         if self.keys["w"]: move += forward
@@ -274,7 +171,7 @@ class TerrainViewer(ShowBase):
         return Task.cont
 
 
-def run_viewer(terrain: TerrainData,
-               layers: list[RenderLayer] | None = None,
+def run_viewer(terrain: Terrain,
+               entities: list[MapEntity] | None = None,
                frame=None) -> None:
-    TerrainViewer(terrain, layers=layers, frame=frame).run()
+    TerrainViewer(terrain, entities=entities, frame=frame).run()

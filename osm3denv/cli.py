@@ -30,7 +30,7 @@ log = logging.getLogger("osm3denv")
                    "use 15 for ~4.5 m/px, 14 for ~9 m/px.")
 @click.option("-v", "--verbose", count=True, help="Increase log verbosity (-v, -vv).")
 def main(lat, lon, radius_m, grid, cache_dir, fetch_only, refresh_cache, dem_zoom, verbose):
-    """Render a 3D terrain around (lat, lon) from SRTM and cache OSM data."""
+    """Render a 3D terrain around (lat, lon) from SRTM and OSM data."""
     _logging.configure(verbose)
 
     if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
@@ -45,7 +45,6 @@ def main(lat, lon, radius_m, grid, cache_dir, fetch_only, refresh_cache, dem_zoo
         dem_zoom=dem_zoom,
     )
     cfg.cache_dir.mkdir(parents=True, exist_ok=True)
-
     log.info("origin=(%.6f,%.6f) radius=%.0fm grid=%d cache=%s",
              cfg.lat, cfg.lon, cfg.radius_m, cfg.grid, cfg.cache_dir)
 
@@ -54,66 +53,46 @@ def main(lat, lon, radius_m, grid, cache_dir, fetch_only, refresh_cache, dem_zoo
 
 
 def run(cfg: Config, frame) -> None:
+    from osm3denv.entities.coastline import Coastline
+    from osm3denv.entities.sea import Sea
+    from osm3denv.entities.terrain import Terrain
+    from osm3denv.entities.water import Water
     from osm3denv.fetch import osm as osm_fetch
     from osm3denv.fetch import terrarium as dem_fetch
-    from osm3denv.layer import RenderLayer
-    from osm3denv.mesh import coastline as coastline_mesh
-    from osm3denv.mesh import sea as sea_mesh
-    from osm3denv.mesh import terrain as terrain_mesh
-    from osm3denv.mesh import water as water_mesh
 
     osm_data = osm_fetch.fetch(frame=frame, radius_m=cfg.radius_m,
-                               cache_dir=cfg.osm_cache,
-                               refresh=cfg.refresh_cache)
+                               cache_dir=cfg.osm_cache, refresh=cfg.refresh_cache)
     log.info("osm: %d ways, %d relations, %d nodes",
              len(osm_data.ways), len(osm_data.relations), len(osm_data.nodes))
 
-    sea_polygon = sea_mesh.build_sea_polygon(osm_data, frame, cfg.radius_m)
-    if sea_polygon is not None:
-        log.info("sea polygon: area=%.0f m² (%s)",
-                 sea_polygon.area, sea_polygon.geom_type)
-    else:
-        log.info("sea polygon: none (no OSM coastlines in bbox — "
-                 "run with --refresh-cache if you expected some)")
+    # Phase 1 — sea polygon (Terrain needs it to clamp underwater vertices).
+    sea = Sea(osm_data, frame, cfg.radius_m)
+    sea.build()
 
-    terrain = terrain_mesh.build(
+    # Phase 2 — terrain mesh.
+    terrain = Terrain(
         frame=frame, radius_m=cfg.radius_m, grid=cfg.grid,
         hgt_loader=dem_fetch.loader(cfg.srtm_cache, zoom=cfg.dem_zoom,
                                     refresh=cfg.refresh_cache),
-        sea_polygon=sea_polygon,
+        sea_polygon=sea.polygon,
     )
-    log.info("terrain: %d verts, %d tris, h=[%.1f..%.1f]",
-             len(terrain.vertices), len(terrain.indices) // 3,
-             float(terrain.heightmap.min()), float(terrain.heightmap.max()))
+    terrain.build()
 
-    # Sea plane sits 0.3 m below absolute sea level so low-lying shore terrain
-    # does not Z-fight the plane at the coast.
-    sea_z = -terrain.origin_alt_m - 0.3
+    # Phase 3 — everything that depends on terrain data.
+    sea.finalize(terrain)
 
-    layers: list[RenderLayer] = [terrain_mesh.terrain_to_layer(terrain)]
+    coastline = Coastline(osm_data, frame, cfg.radius_m, sea_z=sea.sea_z)
+    coastline.build()
 
-    if sea_polygon is not None:
-        layers.append(sea_mesh.build_sea_layer(
-            sea_polygon, cfg.radius_m, sea_z, cfg.radius_m * 20.0))
-
-    coast_layers = coastline_mesh.build(osm_data, frame, cfg.radius_m,
-                                        z=sea_z + 0.5)
-    if coast_layers:
-        n_polylines = sum(len(la.polylines) for la in coast_layers
-                          if la.polylines is not None)
-        log.info("coastline: %d polylines", n_polylines)
-    layers.extend(coast_layers)
-
-    water_layers = water_mesh.build(osm_data, frame, cfg.radius_m,
-                                    terrain.heightmap, terrain.origin_alt_m)
-    layers.extend(water_layers)
+    water = Water(osm_data, frame, cfg.radius_m, terrain)
+    water.build()
 
     if cfg.fetch_only:
         log.info("fetch-only: done.")
         return
 
     from osm3denv.render.app import run_viewer
-    run_viewer(terrain, layers=layers, frame=frame)
+    run_viewer(terrain, entities=[terrain, sea, coastline, water], frame=frame)
 
 
 if __name__ == "__main__":

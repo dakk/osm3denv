@@ -1,11 +1,10 @@
-"""Shared geometry utilities for mesh-building modules."""
+"""Shared geometry utilities."""
 from __future__ import annotations
 
 import numpy as np
 
 
 def grid_coords(x: float, y: float, grid: int, radius_m: float) -> tuple[float, float]:
-    """Convert ENU (x=east, y=north) to fractional heightmap (row, col)."""
     col = (x + radius_m) / (2.0 * radius_m) * (grid - 1)
     row = (radius_m - y) / (2.0 * radius_m) * (grid - 1)
     return float(np.clip(row, 0, grid - 1)), float(np.clip(col, 0, grid - 1))
@@ -25,21 +24,12 @@ def bilinear(arr: np.ndarray, row_f: float, col_f: float, grid: int) -> float:
 
 def sample_z(x: float, y: float,
              heightmap: np.ndarray, grid: int, radius_m: float) -> float:
-    """Bilinear-interpolate the terrain height at arbitrary ENU (x, y)."""
     row, col = grid_coords(x, y, grid, radius_m)
     return bilinear(heightmap, row, col, grid)
 
 
 def triangulate_flat_poly(poly, max_seg: float) -> list[list[tuple[float, float]]]:
-    """Densify *poly*, Delaunay-triangulate, return CCW (x, y) triples.
-
-    Two robustness fixes over plain ``delaunay_triangles()``:
-
-    * ``segmentize()`` prevents triangles jumping across concave pockets by
-      adding intermediate vertices along long edges.
-    * ``covers()`` (not ``contains()``) keeps triangles whose centroid sits
-      exactly on a boundary edge.
-    """
+    """Densify *poly*, Delaunay-triangulate, return CCW (x, y) triples."""
     import shapely
     densified = poly.segmentize(max_seg)
     result = []
