@@ -20,6 +20,7 @@ from direct.showbase.ShowBase import ShowBase
 from direct.task import Task
 from panda3d.core import (
     AmbientLight,
+    DepthOffsetAttrib,
     DirectionalLight,
     Geom,
     GeomNode,
@@ -75,60 +76,91 @@ def _build_terrain_node(terrain: TerrainData) -> GeomNode:
     return node
 
 
-def _triangulate_sea_polygon(sea_full) -> list[list[tuple[float, float]]]:
-    """Triangulate sea_full (Polygon or MultiPolygon) with CCW winding."""
+def _sea_tris_inner(sea_polygon, radius_m: float) -> list[list[tuple[float, float]]]:
+    """Triangulate the sea polygon within the terrain bbox.
+
+    Uses Shapely Delaunay with two key fixes for concave coastlines:
+    * segmentize() densifies long edges so the triangulation doesn't skip
+      concave pockets.
+    * covers() (not contains()) accepts centroids that land exactly on a
+      boundary edge, preventing spurious gaps.
+    """
     import shapely
-    tris_geom = shapely.delaunay_triangles(sea_full)
+    import shapely.geometry as sg
+
+    inner_sea = sea_polygon.intersection(sg.box(-radius_m, -radius_m, radius_m, radius_m))
+    if inner_sea.is_empty:
+        return []
+
+    # Densify: add vertices every ~radius/30 metres along long edges so that
+    # Delaunay can't produce triangles that span concavities.
+    max_seg = max(30.0, radius_m / 30.0)
+    densified = inner_sea.segmentize(max_seg)
+
+    tris_geom = shapely.delaunay_triangles(densified)
     result = []
     for tri in tris_geom.geoms:
-        if not sea_full.contains(tri.centroid):
+        if not inner_sea.covers(tri.centroid):   # covers() includes the boundary
             continue
         coords = list(tri.exterior.coords)[:-1]
         if len(coords) != 3:
             continue
         (x0, y0), (x1, y1), (x2, y2) = coords
-        cross = (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0)
-        if cross < 0:
+        # Enforce CCW winding viewed from +z.
+        if (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0) < 0:
             coords = [coords[0], coords[2], coords[1]]
         result.append(coords)
     return result
 
 
+def _sea_tris_outer(radius_m: float, extent: float) -> list[list[tuple[float, float]]]:
+    """8 CCW triangles covering the rectangular frame between terrain bbox and extent.
+
+    Avoids Shapely entirely for this part — the frame is trivially decomposed
+    into 4 trapezoid quads (2 triangles each), all pre-verified CCW.
+    """
+    r, e = radius_m, extent
+    return [
+        # North strip
+        [(-e, e), (r, r), (e, e)],
+        [(-e, e), (-r, r), (r, r)],
+        # South strip
+        [(-e, -e), (e, -e), (r, -r)],
+        [(-e, -e), (r, -r), (-r, -r)],
+        # West strip
+        [(-e, -e), (-r, r), (-e, e)],
+        [(-e, -e), (-r, -r), (-r, r)],
+        # East strip
+        [(e, -e), (e, e), (r, r)],
+        [(e, -e), (r, r), (r, -r)],
+    ]
+
+
 def _build_sea_node(sea_z: float, extent: float,
                     sea_polygon=None, radius_m: float | None = None) -> GeomNode:
-    """Build the sea geometry.
+    """Build the sea plane geometry.
 
-    When sea_polygon is supplied the sea mesh is shaped as:
-      sea_polygon (precise coastline-clipped shape within the terrain square)
-      ∪ outer frame (everything outside the terrain square up to *extent*)
-
-    This ensures the sea meets the terrain exactly at the coastline and still
-    extends to the horizon beyond the terrain edge.  Fallback to a plain
-    rectangle when no polygon is available (landlocked scenes).
+    Within the terrain bbox the mesh follows the sea polygon exactly.
+    Outside the terrain bbox it fills the full extent with 8 hardcoded
+    triangles (no Shapely needed there).  A DepthOffsetAttrib shifts the
+    sea slightly toward the camera in the depth buffer to eliminate the last
+    bit of Z-fighting at the coastline edge.
     """
-    import shapely.geometry as sg
-
     if sea_polygon is not None and not sea_polygon.is_empty and radius_m is not None:
-        terrain_bbox = sg.box(-radius_m, -radius_m, radius_m, radius_m)
-        big_rect = sg.box(-extent, -extent, extent, extent)
-        outer_frame = big_rect.difference(terrain_bbox)
-        sea_full = sea_polygon.union(outer_frame)
+        sea_tris = (
+            _sea_tris_outer(radius_m, extent) +
+            _sea_tris_inner(sea_polygon, radius_m)
+        )
     else:
-        sea_full = sg.box(-extent, -extent, extent, extent)
-
-    sea_tris = _triangulate_sea_polygon(sea_full)
-
-    if not sea_tris:
-        # Degenerate fallback
+        e = extent
         sea_tris = [
-            [(-extent, -extent), (extent, -extent), (extent, extent)],
-            [(-extent, -extent), (extent, extent), (-extent, extent)],
+            [(-e, -e), (e, -e), (e, e)],
+            [(-e, -e), (e, e), (-e, e)],
         ]
 
     vfmt = GeomVertexFormat.getV3n3()
     vdata = GeomVertexData("sea", vfmt, Geom.UHStatic)
-    n_verts = len(sea_tris) * 3
-    vdata.setNumRows(n_verts)
+    vdata.setNumRows(len(sea_tris) * 3)
     vw = GeomVertexWriter(vdata, "vertex")
     nw = GeomVertexWriter(vdata, "normal")
 
@@ -146,6 +178,9 @@ def _build_sea_node(sea_z: float, extent: float,
     geom.addPrimitive(prim)
     node = GeomNode("sea")
     node.addGeom(geom)
+    # Shift the sea plane slightly toward the camera in the depth buffer so it
+    # always wins against terrain vertices that are at exactly the same z.
+    node.setAttrib(DepthOffsetAttrib.make(1))
     return node
 
 
