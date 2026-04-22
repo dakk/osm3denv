@@ -178,24 +178,90 @@ def build(osm: OSMData, frame: Frame, sampler: TerrainSampler,
     out: list[FurnitureMesh] = []
 
     # --- Lamp posts ---------------------------------------------------
+    # Collect both explicit OSM street_lamp nodes AND synthetic lamps
+    # auto-placed along major/minor roads, batched into one mesh.
+    lamp_positions: list[tuple[float, float, float]] = []  # (east, north, height)
     lamp_nodes = osm.filter_nodes(lambda t: t.get("highway") == "street_lamp")
-    if lamp_nodes:
-        lv, ln, lu, li = [], [], [], []
-        off = 0; count = 0
-        for node in lamp_nodes[:MAX_ITEMS]:
-            e, n = frame.to_enu(node.lon, node.lat)
-            e = float(e); n = float(n)
-            if radius_m is not None and (abs(e) > radius_m or abs(n) > radius_m):
+    for node in lamp_nodes[:MAX_ITEMS]:
+        e, n = frame.to_enu(node.lon, node.lat)
+        e = float(e); n = float(n)
+        if radius_m is not None and (abs(e) > radius_m or abs(n) > radius_m):
+            continue
+        h = parse_number(node.tags.get("height"))
+        if h is None or h <= 0.5 or h > 12.0:
+            h = 4.0
+        lamp_positions.append((e, n, float(h)))
+
+    # Auto-scatter: every 30 m on each side of major/minor asphalt roads.
+    # Offset laterally past the sidewalk strip (half_width + 1.7 m).
+    _LAMP_ROAD_WIDTHS = {
+        "motorway": 12.0, "trunk": 10.0, "primary": 8.0, "secondary": 6.5,
+        "tertiary": 5.5, "residential": 5.0, "unclassified": 5.0,
+        "living_street": 4.0, "service": 3.0,
+    }
+    _LAMP_MAX = 800
+    auto_count = 0
+    for way in osm.ways:
+        if auto_count >= _LAMP_MAX:
+            break
+        hw = way.tags.get("highway")
+        if hw not in _LAMP_ROAD_WIDTHS:
+            continue
+        if (way.tags.get("tunnel") == "yes"
+                or way.tags.get("bridge") == "yes"):
+            continue
+        lon = np.asarray([p[0] for p in way.geometry], dtype=np.float64)
+        lat = np.asarray([p[1] for p in way.geometry], dtype=np.float64)
+        if len(lon) < 2:
+            continue
+        east, north = frame.to_enu(lon, lat)
+        coords = np.stack([east, north], axis=-1)
+        # Total length.
+        segs = np.linalg.norm(np.diff(coords, axis=0), axis=1)
+        total = float(segs.sum())
+        if total < 30.0:
+            continue
+        width = _LAMP_ROAD_WIDTHS[hw]
+        lat_off = width * 0.5 + 1.7       # past the sidewalk
+        step = 30.0
+        # Precompute cumulative arc-length.
+        cum = np.concatenate([[0.0], np.cumsum(segs)])
+        d = 15.0   # first lamp offset from start
+        while d < total and auto_count < _LAMP_MAX:
+            # Interpolate (east, north) at arc-length d.
+            idx = int(np.searchsorted(cum, d, side="right")) - 1
+            idx = max(0, min(idx, len(segs) - 1))
+            seg_len = segs[idx]
+            if seg_len < 1e-6:
+                d += step
                 continue
-            h = parse_number(node.tags.get("height"))
-            if h is None or h <= 0.5 or h > 12.0:
-                h = 4.0
+            t = (d - cum[idx]) / seg_len
+            p = coords[idx] + (coords[idx + 1] - coords[idx]) * t
+            # Unit tangent for this segment; side alternates each step so
+            # lamps zig-zag rather than facing each other.
+            tan = (coords[idx + 1] - coords[idx]) / seg_len
+            perp = np.array([-tan[1], tan[0]])
+            sign = 1.0 if (int(d / step) & 1) == 0 else -1.0
+            lamp_e = float(p[0] + sign * lat_off * perp[0])
+            lamp_n = float(p[1] + sign * lat_off * perp[1])
+            d += step
+            if radius_m is not None and (abs(lamp_e) > radius_m
+                                         or abs(lamp_n) > radius_m):
+                continue
+            lamp_positions.append((lamp_e, lamp_n, 5.0))
+            auto_count += 1
+
+    if lamp_positions:
+        lv, ln, lu, li = [], [], [], []
+        vertex_off = 0
+        for e, n, h in lamp_positions:
             base_y = float(sampler.height_at(e, n))
-            # Ogre frame: (east, y, -north)
-            off = _build_lamp(e, base_y, -n, float(h), lv, ln, lu, li, off)
-            count += 1
-        out.append(_finalise("lamp", lv, ln, lu, li, count))
-        log.info("furniture lamps: %d", count)
+            vertex_off = _build_lamp(e, base_y, -n, h, lv, ln, lu, li,
+                                     vertex_off)
+        out.append(_finalise("lamp", lv, ln, lu, li, len(lamp_positions)))
+        log.info("furniture lamps: %d (%d osm + %d auto)",
+                 len(lamp_positions),
+                 len(lamp_positions) - auto_count, auto_count)
 
     # --- Benches ------------------------------------------------------
     bench_nodes = osm.filter_nodes(lambda t: t.get("amenity") == "bench")

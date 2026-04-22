@@ -23,6 +23,7 @@ uniform sampler2D surface_rough;
 uniform sampler2D surface_ao;
 
 uniform int marking_mode;
+uniform float edge_offset;    // half-width (m) for solid edge lines; 0 = off
 
 in vec3 v_world_pos;
 in vec3 v_world_normal;
@@ -154,6 +155,21 @@ vec4 compute_marking(vec2 uv) {
 
     float u = uv.x;
     float v = uv.y;
+
+    // Solid white edge lines just inside each kerb for any road that has
+    // markings. The road ribbon UV.x spans [-half_width, +half_width], and
+    // ``edge_offset`` is the half-width per material; paint an 0.12 m line
+    // 8 cm inside that.
+    if (edge_offset > 0.1) {
+        float line_half = 0.06;
+        float inset = 0.08;
+        float left_edge  = abs(u + (edge_offset - inset));
+        float right_edge = abs(u - (edge_offset - inset));
+        float edge = min(left_edge, right_edge);
+        float aa = fwidth(u);
+        float line = 1.0 - smoothstep(line_half - aa, line_half + aa, edge);
+        if (line > 0.0) return vec4(vec3(1.0), line);
+    }
 
     if (marking_mode == 1) {
         // Dashed white centreline: 3 m painted line, 9 m gap.

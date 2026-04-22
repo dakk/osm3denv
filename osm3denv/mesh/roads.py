@@ -22,6 +22,8 @@ from dataclasses import dataclass
 
 import numpy as np
 import shapely.geometry as sg
+import shapely.vectorized as sv
+from shapely.ops import unary_union
 
 from osm3denv.fetch.osm import OSMData, OSMWay
 from osm3denv.frame import Frame
@@ -124,8 +126,12 @@ def _densify(coords: np.ndarray, max_step: float) -> np.ndarray:
 def _build_ribbon(coords: np.ndarray, width: float,
                   sampler: TerrainSampler, *,
                   offset: float = 0.0, flat_y: float | None = None,
-                  max_step: float = 1.5):
+                  max_step: float = 1.5, lateral_offset: float = 0.0):
     """Construct a triangle-strip ribbon along the centreline ``coords``.
+
+    ``lateral_offset`` shifts the ribbon perpendicular to the road direction
+    (positive = to the left of the direction of travel). Used to place
+    sidewalks beside the asphalt without changing the main-road ribbon.
 
     Returns (vertices, normals, indices, uvs) or None if degenerate.
     """
@@ -145,9 +151,10 @@ def _build_ribbon(coords: np.ndarray, width: float,
     # Perpendicular in the East/North plane (rotate 90° CCW).
     perp = np.stack([-tangents[:, 1], tangents[:, 0]], axis=-1)
 
+    centre = dens + perp * lateral_offset
     half_w = width * 0.5
-    left  = dens + perp * half_w
-    right = dens - perp * half_w
+    left  = centre + perp * half_w
+    right = centre - perp * half_w
 
     # Interleave left_i, right_i → 2n vertices.
     verts_2d = np.empty((2 * n, 2), dtype=np.float64)
@@ -192,12 +199,78 @@ def _build_ribbon(coords: np.ndarray, width: float,
     return vertices, normals, indices, uvs
 
 
+def _road_union(candidates: list[OSMWay], frame: Frame):
+    """Union of every (non-tunnel) highway's tarmac footprint.
+
+    Used to clip sidewalk ribbons so they don't run across a crossing road's
+    surface. Railways and footpaths are excluded because we don't build
+    sidewalks for them (and their surfaces shouldn't clip anything either).
+    """
+    polys = []
+    for way in candidates:
+        if way.tags.get("tunnel") == "yes":
+            continue
+        if "railway" in way.tags:
+            continue
+        hw = way.tags.get("highway")
+        if hw in _KIND_PAVED or hw in _KIND_DIRT:
+            continue
+        coords = _way_to_coords(way, frame)
+        if coords is None:
+            continue
+        width = _way_width(way)
+        try:
+            line = sg.LineString(coords)
+            polys.append(line.buffer(width * 0.5,
+                                     cap_style="flat", join_style="mitre"))
+        except Exception:  # noqa: BLE001
+            continue
+    if not polys:
+        return None
+    try:
+        return unary_union(polys)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _clip_ribbon_triangles(ribbon, road_union):
+    """Drop triangles whose centroid lies inside ``road_union``.
+
+    Applied to sidewalk ribbons so a sidewalk can't cross a perpendicular
+    road's tarmac at a junction. Vertices left dangling are harmless — Ogre
+    only renders triangles via the index buffer.
+    """
+    if road_union is None:
+        return ribbon
+    vertices, normals, indices, uvs = ribbon
+    tri = indices.reshape(-1, 3)
+    # Centroids in ENU: east = vx, north = -vz (Ogre z is flipped).
+    cx = (vertices[tri[:, 0], 0]
+          + vertices[tri[:, 1], 0]
+          + vertices[tri[:, 2], 0]) / 3.0
+    cn = -(vertices[tri[:, 0], 2]
+           + vertices[tri[:, 1], 2]
+           + vertices[tri[:, 2], 2]) / 3.0
+    inside = sv.contains(road_union,
+                         cx.astype(np.float64),
+                         cn.astype(np.float64))
+    keep = ~inside
+    if keep.all():
+        return ribbon
+    new_indices = tri[keep].ravel().astype(np.uint32)
+    if len(new_indices) == 0:
+        return None
+    return vertices, normals, new_indices, uvs
+
+
 def build(osm: OSMData, frame: Frame,
           sampler: TerrainSampler) -> list[RoadsMesh]:
     """Build one RoadsMesh per road kind encountered."""
     buckets: dict[str, list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]] = {}
 
     candidates = osm.filter_ways(lambda t: "highway" in t or "railway" in t)
+    road_union = _road_union(candidates, frame)
+
     for way in candidates:
         if way.tags.get("tunnel") == "yes":
             continue
@@ -222,6 +295,24 @@ def build(osm: OSMData, frame: Frame,
         if res is None:
             continue
         buckets.setdefault(kind, []).append(res)
+
+        # Sidewalks alongside asphalt roads only (and only when on the
+        # ground — elevated bridges don't get side strips). Two 1.5 m-wide
+        # paving ribbons, centred 0.75 m outside each kerb, sitting 5 cm
+        # higher than the tarmac so there's a visible step.
+        if (kind in ("asphalt_major", "asphalt_minor")
+                and not way.tags.get("bridge") == "yes"):
+            side_w = 1.5
+            lat = width * 0.5 + side_w * 0.5
+            for sign in (+1.0, -1.0):
+                side = _build_ribbon(coords, side_w, sampler,
+                                     offset=0.45, max_step=1.5,
+                                     lateral_offset=sign * lat)
+                if side is None:
+                    continue
+                side = _clip_ribbon_triangles(side, road_union)
+                if side is not None:
+                    buckets.setdefault("sidewalk", []).append(side)
 
     out: list[RoadsMesh] = []
     for kind, parts in buckets.items():

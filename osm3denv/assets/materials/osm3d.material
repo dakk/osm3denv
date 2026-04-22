@@ -435,7 +435,10 @@ material osm3d/roads/asphalt_major
     technique { pass {
         depth_bias 10 5
         vertex_program_ref osm3d_terrain_vs { }
-        fragment_program_ref osm3d_road_pbr_fs { param_named marking_mode int 2 }
+        fragment_program_ref osm3d_road_pbr_fs {
+            param_named marking_mode int 2
+            param_named edge_offset float 6.0
+        }
         texture_unit surface_albedo
         {
             texture Asphalt026A_2K-PNG_Color.png
@@ -468,7 +471,10 @@ material osm3d/roads/asphalt_minor
     technique { pass {
         depth_bias 10 5
         vertex_program_ref osm3d_terrain_vs { }
-        fragment_program_ref osm3d_road_pbr_fs { param_named marking_mode int 1 }
+        fragment_program_ref osm3d_road_pbr_fs {
+            param_named marking_mode int 1
+            param_named edge_offset float 2.5
+        }
         texture_unit surface_albedo
         {
             texture Asphalt026A_2K-PNG_Color.png
@@ -556,6 +562,42 @@ material osm3d/roads/dirt
         texture_unit surface_ao
         {
             texture Ground054_2K-PNG_AmbientOcclusion.png
+            filtering trilinear
+            tex_address_mode wrap
+        }
+    } }
+}
+
+// Sidewalk strip rendered beside every asphalt road (both sides). Reuses
+// the paving-stones pack with a higher depth_bias so it overlays the road
+// polygon cleanly at intersections.
+material osm3d/roads/sidewalk
+{
+    technique { pass {
+        depth_bias 15 5
+        vertex_program_ref osm3d_terrain_vs { }
+        fragment_program_ref osm3d_road_pbr_fs { param_named marking_mode int 0 }
+        texture_unit surface_albedo
+        {
+            texture PavingStones012_2K-PNG_Color.png
+            filtering trilinear
+            tex_address_mode wrap
+        }
+        texture_unit surface_normal
+        {
+            texture PavingStones012_2K-PNG_NormalGL.png
+            filtering trilinear
+            tex_address_mode wrap
+        }
+        texture_unit surface_rough
+        {
+            texture PavingStones012_2K-PNG_Roughness.png
+            filtering trilinear
+            tex_address_mode wrap
+        }
+        texture_unit surface_ao
+        {
+            texture PavingStones012_2K-PNG_AmbientOcclusion.png
             filtering trilinear
             tex_address_mode wrap
         }
