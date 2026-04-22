@@ -70,6 +70,7 @@ def _build_query(bbox_ll: tuple[float, float, float, float]) -> str:
   way["building"]({bb});
   way["highway"]({bb});
   way["natural"="water"]({bb});
+  way["natural"="coastline"]({bb});
 );
 out geom;
 """

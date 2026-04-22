@@ -52,6 +52,8 @@ def main(lat, lon, radius_m, grid, cache_dir, fetch_only, refresh_cache, verbose
 def run(cfg: Config, frame) -> None:
     from osm3denv.fetch import osm as osm_fetch
     from osm3denv.fetch import srtm as srtm_fetch
+    from osm3denv.mesh import coastline as coastline_mesh
+    from osm3denv.mesh import sea as sea_mesh
     from osm3denv.mesh import terrain as terrain_mesh
 
     osm_data = osm_fetch.fetch(frame=frame, radius_m=cfg.radius_m,
@@ -60,20 +62,37 @@ def run(cfg: Config, frame) -> None:
     log.info("osm: %d ways, %d relations, %d nodes",
              len(osm_data.ways), len(osm_data.relations), len(osm_data.nodes))
 
+    sea_polygon = sea_mesh.build_sea_polygon(osm_data, frame, cfg.radius_m)
+    if sea_polygon is not None:
+        log.info("sea polygon: area=%.0f m² (%s)",
+                 sea_polygon.area, sea_polygon.geom_type)
+    else:
+        log.info("sea polygon: none (no OSM coastlines in bbox — "
+                 "run with --refresh-cache if you expected some)")
+
     terrain = terrain_mesh.build(
         frame=frame, radius_m=cfg.radius_m, grid=cfg.grid,
         hgt_loader=srtm_fetch.loader(cfg.srtm_cache, refresh=cfg.refresh_cache),
+        sea_polygon=sea_polygon,
     )
     log.info("terrain: %d verts, %d tris, h=[%.1f..%.1f]",
              len(terrain.vertices), len(terrain.indices) // 3,
              float(terrain.heightmap.min()), float(terrain.heightmap.max()))
 
+    coastline = coastline_mesh.build(osm_data, frame, cfg.radius_m)
+    log.info("coastline: %d polylines (%d vertices)",
+             len(coastline.polylines),
+             sum(len(p) for p in coastline.polylines))
+
     if cfg.fetch_only:
         log.info("fetch-only: done.")
         return
 
+    # Sea sits 0.3 m below absolute sea level so low shore terrain (SRTM
+    # cells near 0 m) does not Z-fight the plane at the coast.
+    sea_z = -terrain.origin_alt_m - 0.3
     from osm3denv.render.app import run_viewer
-    run_viewer(terrain)
+    run_viewer(terrain, coastline=coastline, sea_z=sea_z, sea_polygon=sea_polygon)
 
 
 if __name__ == "__main__":

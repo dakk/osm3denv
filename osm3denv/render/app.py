@@ -27,6 +27,7 @@ from panda3d.core import (
     GeomVertexData,
     GeomVertexFormat,
     GeomVertexWriter,
+    LineSegs,
     LVector3,
     TextNode,
     Vec4,
@@ -34,6 +35,7 @@ from panda3d.core import (
 )
 from direct.gui.OnscreenText import OnscreenText
 
+from osm3denv.mesh.coastline import CoastlineData
 from osm3denv.mesh.terrain import TerrainData
 
 log = logging.getLogger(__name__)
@@ -73,10 +75,100 @@ def _build_terrain_node(terrain: TerrainData) -> GeomNode:
     return node
 
 
+def _triangulate_sea_polygon(sea_full) -> list[list[tuple[float, float]]]:
+    """Triangulate sea_full (Polygon or MultiPolygon) with CCW winding."""
+    import shapely
+    tris_geom = shapely.delaunay_triangles(sea_full)
+    result = []
+    for tri in tris_geom.geoms:
+        if not sea_full.contains(tri.centroid):
+            continue
+        coords = list(tri.exterior.coords)[:-1]
+        if len(coords) != 3:
+            continue
+        (x0, y0), (x1, y1), (x2, y2) = coords
+        cross = (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0)
+        if cross < 0:
+            coords = [coords[0], coords[2], coords[1]]
+        result.append(coords)
+    return result
+
+
+def _build_sea_node(sea_z: float, extent: float,
+                    sea_polygon=None, radius_m: float | None = None) -> GeomNode:
+    """Build the sea geometry.
+
+    When sea_polygon is supplied the sea mesh is shaped as:
+      sea_polygon (precise coastline-clipped shape within the terrain square)
+      ∪ outer frame (everything outside the terrain square up to *extent*)
+
+    This ensures the sea meets the terrain exactly at the coastline and still
+    extends to the horizon beyond the terrain edge.  Fallback to a plain
+    rectangle when no polygon is available (landlocked scenes).
+    """
+    import shapely.geometry as sg
+
+    if sea_polygon is not None and not sea_polygon.is_empty and radius_m is not None:
+        terrain_bbox = sg.box(-radius_m, -radius_m, radius_m, radius_m)
+        big_rect = sg.box(-extent, -extent, extent, extent)
+        outer_frame = big_rect.difference(terrain_bbox)
+        sea_full = sea_polygon.union(outer_frame)
+    else:
+        sea_full = sg.box(-extent, -extent, extent, extent)
+
+    sea_tris = _triangulate_sea_polygon(sea_full)
+
+    if not sea_tris:
+        # Degenerate fallback
+        sea_tris = [
+            [(-extent, -extent), (extent, -extent), (extent, extent)],
+            [(-extent, -extent), (extent, extent), (-extent, extent)],
+        ]
+
+    vfmt = GeomVertexFormat.getV3n3()
+    vdata = GeomVertexData("sea", vfmt, Geom.UHStatic)
+    n_verts = len(sea_tris) * 3
+    vdata.setNumRows(n_verts)
+    vw = GeomVertexWriter(vdata, "vertex")
+    nw = GeomVertexWriter(vdata, "normal")
+
+    prim = GeomTriangles(Geom.UHStatic)
+    vi = 0
+    for tri_coords in sea_tris:
+        for (x, y) in tri_coords:
+            vw.addData3(float(x), float(y), float(sea_z))
+            nw.addData3(0.0, 0.0, 1.0)
+        prim.addVertices(vi, vi + 1, vi + 2)
+        vi += 3
+    prim.closePrimitive()
+
+    geom = Geom(vdata)
+    geom.addPrimitive(prim)
+    node = GeomNode("sea")
+    node.addGeom(geom)
+    return node
+
+
+def _build_coastline_node(coast: CoastlineData, z: float) -> GeomNode | None:
+    if not coast.polylines:
+        return None
+    ls = LineSegs("coastline")
+    ls.setColor(1.0, 0.85, 0.2, 1.0)
+    ls.setThickness(2.0)
+    for poly in coast.polylines:
+        ls.moveTo(float(poly[0, 0]), float(poly[0, 1]), z)
+        for p in poly[1:]:
+            ls.drawTo(float(p[0]), float(p[1]), z)
+    return ls.create()
+
+
 class TerrainViewer(ShowBase):
     MOVE_KEYS = ("w", "a", "s", "d", "q", "e")
 
-    def __init__(self, terrain: TerrainData):
+    def __init__(self, terrain: TerrainData,
+                 coastline: CoastlineData | None = None,
+                 sea_z: float | None = None,
+                 sea_polygon=None):
         ShowBase.__init__(self)
 
         props = WindowProperties()
@@ -89,6 +181,20 @@ class TerrainViewer(ShowBase):
         terrain_np = self.render.attachNewNode(terrain_node)
         terrain_np.setColor(Vec4(0.45, 0.55, 0.35, 1.0))
 
+        r = float(terrain.radius_m)
+        if sea_z is not None:
+            sea_np = self.render.attachNewNode(
+                _build_sea_node(sea_z, extent=r * 20.0,
+                                sea_polygon=sea_polygon, radius_m=r))
+            sea_np.setColor(Vec4(0.08, 0.25, 0.40, 1.0))
+            sea_np.setTwoSided(True)
+
+            if coastline is not None:
+                coast_node = _build_coastline_node(coastline, z=sea_z + 0.5)
+                if coast_node is not None:
+                    coast_np = self.render.attachNewNode(coast_node)
+                    coast_np.setLightOff()
+
         ambient = AmbientLight("ambient")
         ambient.setColor(Vec4(0.35, 0.35, 0.40, 1.0))
         self.render.setLight(self.render.attachNewNode(ambient))
@@ -99,7 +205,6 @@ class TerrainViewer(ShowBase):
         sun_np.setHpr(-30, -50, 0)
         self.render.setLight(sun_np)
 
-        r = float(terrain.radius_m)
         self.disableMouse()
         self.camera.setPos(0.0, -r * 1.5, r * 0.8)
         self.heading = 0.0
@@ -109,7 +214,7 @@ class TerrainViewer(ShowBase):
         self.camLens.setNear(1.0)
         self.camLens.setFov(70)
 
-        self.move_speed = max(50.0, r * 0.2)  # m/s at default; Shift sprints x4
+        self.move_speed = max(50.0, r * 0.2)
         self.shift_held = False
         self.keys: dict[str, bool] = {k: False for k in self.MOVE_KEYS}
         for k in self.MOVE_KEYS:
@@ -198,5 +303,9 @@ class TerrainViewer(ShowBase):
         return Task.cont
 
 
-def run_viewer(terrain: TerrainData) -> None:
-    TerrainViewer(terrain).run()
+def run_viewer(terrain: TerrainData,
+               coastline: CoastlineData | None = None,
+               sea_z: float | None = None,
+               sea_polygon=None) -> None:
+    TerrainViewer(terrain, coastline=coastline, sea_z=sea_z,
+                  sea_polygon=sea_polygon).run()
