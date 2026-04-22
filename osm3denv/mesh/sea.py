@@ -104,6 +104,7 @@ def build_sea_layer(sea_polygon, radius_m: float,
         color=(0.08, 0.25, 0.40, 1.0),
         depth_offset=1,
         two_sided=True,
+        shader_name="sea",
     )
 
 

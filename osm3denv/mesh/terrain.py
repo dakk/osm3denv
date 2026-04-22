@@ -51,6 +51,8 @@ def terrain_to_layer(terrain: TerrainData) -> RenderLayer:
         uvs=terrain.uvs,
         indices=terrain.indices,
         color=(0.45, 0.55, 0.35, 1.0),
+        shader_name="terrain",
+        shader_inputs={"u_origin_alt_m": float(terrain.origin_alt_m)},
     )
 
 

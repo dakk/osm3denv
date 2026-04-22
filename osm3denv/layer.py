@@ -36,3 +36,5 @@ class RenderLayer:
     depth_offset: int = 0
     lit:          bool = True
     two_sided:    bool = False
+    shader_name:   str | None = None   # named GLSL shader from render/shaders/
+    shader_inputs: dict = field(default_factory=dict)  # uniform name → value

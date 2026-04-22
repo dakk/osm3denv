@@ -185,6 +185,7 @@ def build(osm: OSMData, frame: Frame, radius_m: float,
                 color=(0.15, 0.40, 0.65, 1.0),
                 depth_offset=2,
                 two_sided=True,
+                shader_name="lake",
             ))
 
     if river_polylines:

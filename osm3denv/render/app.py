@@ -36,10 +36,29 @@ from panda3d.core import (
 )
 from direct.gui.OnscreenText import OnscreenText
 
+from pathlib import Path
+
 from osm3denv.layer import RenderLayer
 from osm3denv.mesh.terrain import TerrainData
 
 log = logging.getLogger(__name__)
+
+_SHADER_DIR = Path(__file__).parent / "shaders"
+_shader_cache: dict = {}
+
+
+def _load_shader(name: str):
+    if name in _shader_cache:
+        return _shader_cache[name]
+    from panda3d.core import Shader
+    vert = _SHADER_DIR / f"{name}.vert"
+    frag = _SHADER_DIR / f"{name}.frag"
+    if not vert.exists() or not frag.exists():
+        log.warning("shader '%s' not found in %s", name, _SHADER_DIR)
+        return None
+    shader = Shader.load(Shader.SL_GLSL, vertex=str(vert), fragment=str(frag))
+    _shader_cache[name] = shader
+    return shader
 
 
 def _layer_to_np(layer: RenderLayer, parent) -> None:
@@ -82,9 +101,16 @@ def _layer_to_np(layer: RenderLayer, parent) -> None:
             geom_node.setAttrib(DepthOffsetAttrib.make(layer.depth_offset))
 
         mesh_np = parent.attachNewNode(geom_node)
-        mesh_np.setColor(Vec4(*layer.color))
-        if not layer.lit:
-            mesh_np.setLightOff()
+        if layer.shader_name is not None:
+            shader = _load_shader(layer.shader_name)
+            if shader is not None:
+                mesh_np.setShader(shader)
+                for uname, uval in layer.shader_inputs.items():
+                    mesh_np.setShaderInput(uname, uval)
+        else:
+            mesh_np.setColor(Vec4(*layer.color))
+            if not layer.lit:
+                mesh_np.setLightOff()
         if layer.two_sided:
             mesh_np.setTwoSided(True)
 
