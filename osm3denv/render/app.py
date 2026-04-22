@@ -1,4 +1,4 @@
-"""Minimal Panda3D viewer for a TerrainData mesh.
+"""Minimal Panda3D viewer for a terrain scene.
 
 Controls
 --------
@@ -36,217 +36,78 @@ from panda3d.core import (
 )
 from direct.gui.OnscreenText import OnscreenText
 
-from osm3denv.mesh.coastline import CoastlineData
+from osm3denv.layer import RenderLayer
 from osm3denv.mesh.terrain import TerrainData
-from osm3denv.mesh.water import WaterData
 
 log = logging.getLogger(__name__)
 
 
-def _build_terrain_node(terrain: TerrainData) -> GeomNode:
-    vfmt = GeomVertexFormat.getV3n3t2()
-    vdata = GeomVertexData("terrain", vfmt, Geom.UHStatic)
-    n = len(terrain.vertices)
-    vdata.setNumRows(n)
+def _layer_to_np(layer: RenderLayer, parent) -> None:
+    """Attach a RenderLayer to *parent* as one or two Panda3D nodes."""
+    if layer.vertices is not None and layer.normals is not None:
+        has_uvs = layer.uvs is not None
+        vfmt = GeomVertexFormat.getV3n3t2() if has_uvs else GeomVertexFormat.getV3n3()
+        vdata = GeomVertexData(layer.name, vfmt, Geom.UHStatic)
+        n = len(layer.vertices)
+        vdata.setNumRows(n)
 
-    vwriter = GeomVertexWriter(vdata, "vertex")
-    nwriter = GeomVertexWriter(vdata, "normal")
-    twriter = GeomVertexWriter(vdata, "texcoord")
+        vwriter = GeomVertexWriter(vdata, "vertex")
+        nwriter = GeomVertexWriter(vdata, "normal")
+        if has_uvs:
+            twriter = GeomVertexWriter(vdata, "texcoord")
 
-    verts = terrain.vertices
-    norms = terrain.normals
-    uvs = terrain.uvs
-    for i in range(n):
-        vx, vy, vz = verts[i]
-        nx, ny, nz = norms[i]
-        u, v = uvs[i]
-        vwriter.addData3(float(vx), float(vy), float(vz))
-        nwriter.addData3(float(nx), float(ny), float(nz))
-        twriter.addData2(float(u), float(v))
+        verts = layer.vertices
+        norms = layer.normals
+        for i in range(n):
+            vwriter.addData3(float(verts[i, 0]), float(verts[i, 1]), float(verts[i, 2]))
+            nwriter.addData3(float(norms[i, 0]), float(norms[i, 1]), float(norms[i, 2]))
+            if has_uvs:
+                twriter.addData2(float(layer.uvs[i, 0]), float(layer.uvs[i, 1]))
 
-    prim = GeomTriangles(Geom.UHStatic)
-    idx = np.asarray(terrain.indices, dtype=np.uint32).reshape(-1, 3)
-    for a, b, c in idx:
-        prim.addVertices(int(a), int(b), int(c))
-    prim.closePrimitive()
+        prim = GeomTriangles(Geom.UHStatic)
+        if layer.indices is not None:
+            idx = np.asarray(layer.indices, dtype=np.uint32).reshape(-1, 3)
+            for a, b, c in idx:
+                prim.addVertices(int(a), int(b), int(c))
+        else:
+            for i in range(0, n, 3):
+                prim.addVertices(i, i + 1, i + 2)
+        prim.closePrimitive()
 
-    geom = Geom(vdata)
-    geom.addPrimitive(prim)
-    node = GeomNode("terrain")
-    node.addGeom(geom)
-    return node
+        geom = Geom(vdata)
+        geom.addPrimitive(prim)
+        geom_node = GeomNode(layer.name)
+        geom_node.addGeom(geom)
+        if layer.depth_offset:
+            geom_node.setAttrib(DepthOffsetAttrib.make(layer.depth_offset))
 
+        mesh_np = parent.attachNewNode(geom_node)
+        mesh_np.setColor(Vec4(*layer.color))
+        if not layer.lit:
+            mesh_np.setLightOff()
+        if layer.two_sided:
+            mesh_np.setTwoSided(True)
 
-def _triangulate_flat_poly(poly, max_seg: float) -> list[list[tuple[float, float]]]:
-    """Densify *poly*, Delaunay-triangulate it, return CCW (x,y) triples.
-
-    Two robustness fixes vs plain delaunay_triangles():
-    * segmentize() prevents triangles that jump across concave pockets.
-    * covers() (not contains()) keeps triangles whose centroid sits exactly
-      on a boundary edge.
-    """
-    import shapely
-    densified = poly.segmentize(max_seg)
-    result = []
-    for tri in shapely.delaunay_triangles(densified).geoms:
-        if not poly.covers(tri.centroid):
-            continue
-        coords = list(tri.exterior.coords)[:-1]
-        if len(coords) != 3:
-            continue
-        (x0, y0), (x1, y1), (x2, y2) = coords
-        if (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0) < 0:
-            coords = [coords[0], coords[2], coords[1]]
-        result.append(coords)
-    return result
-
-
-def _sea_tris_inner(sea_polygon, radius_m: float) -> list[list[tuple[float, float]]]:
-    """Triangulate the sea polygon clipped to the terrain bbox."""
-    import shapely.geometry as sg
-    inner_sea = sea_polygon.intersection(sg.box(-radius_m, -radius_m, radius_m, radius_m))
-    if inner_sea.is_empty:
-        return []
-    return _triangulate_flat_poly(inner_sea, max_seg=max(30.0, radius_m / 30.0))
-
-
-def _sea_tris_outer(radius_m: float, extent: float) -> list[list[tuple[float, float]]]:
-    """8 CCW triangles covering the rectangular frame between terrain bbox and extent.
-
-    Avoids Shapely entirely for this part — the frame is trivially decomposed
-    into 4 trapezoid quads (2 triangles each), all pre-verified CCW.
-    """
-    r, e = radius_m, extent
-    return [
-        # North strip
-        [(-e, e), (r, r), (e, e)],
-        [(-e, e), (-r, r), (r, r)],
-        # South strip
-        [(-e, -e), (e, -e), (r, -r)],
-        [(-e, -e), (r, -r), (-r, -r)],
-        # West strip
-        [(-e, -e), (-r, r), (-e, e)],
-        [(-e, -e), (-r, -r), (-r, r)],
-        # East strip
-        [(e, -e), (e, e), (r, r)],
-        [(e, -e), (r, r), (r, -r)],
-    ]
-
-
-def _build_sea_node(sea_z: float, extent: float,
-                    sea_polygon=None, radius_m: float | None = None) -> GeomNode:
-    """Build the sea plane geometry.
-
-    Within the terrain bbox the mesh follows the sea polygon exactly.
-    Outside the terrain bbox it fills the full extent with 8 hardcoded
-    triangles (no Shapely needed there).  A DepthOffsetAttrib shifts the
-    sea slightly toward the camera in the depth buffer to eliminate the last
-    bit of Z-fighting at the coastline edge.
-    """
-    if sea_polygon is not None and not sea_polygon.is_empty and radius_m is not None:
-        sea_tris = (
-            _sea_tris_outer(radius_m, extent) +
-            _sea_tris_inner(sea_polygon, radius_m)
-        )
-    else:
-        e = extent
-        sea_tris = [
-            [(-e, -e), (e, -e), (e, e)],
-            [(-e, -e), (e, e), (-e, e)],
-        ]
-
-    vfmt = GeomVertexFormat.getV3n3()
-    vdata = GeomVertexData("sea", vfmt, Geom.UHStatic)
-    vdata.setNumRows(len(sea_tris) * 3)
-    vw = GeomVertexWriter(vdata, "vertex")
-    nw = GeomVertexWriter(vdata, "normal")
-
-    prim = GeomTriangles(Geom.UHStatic)
-    vi = 0
-    for tri_coords in sea_tris:
-        for (x, y) in tri_coords:
-            vw.addData3(float(x), float(y), float(sea_z))
-            nw.addData3(0.0, 0.0, 1.0)
-        prim.addVertices(vi, vi + 1, vi + 2)
-        vi += 3
-    prim.closePrimitive()
-
-    geom = Geom(vdata)
-    geom.addPrimitive(prim)
-    node = GeomNode("sea")
-    node.addGeom(geom)
-    # Shift the sea plane slightly toward the camera in the depth buffer so it
-    # always wins against terrain vertices that are at exactly the same z.
-    node.setAttrib(DepthOffsetAttrib.make(1))
-    return node
-
-
-def _build_water_poly_node(water: WaterData) -> GeomNode | None:
-    """Flat polygon mesh for lakes, ponds, and river-bank areas."""
-    if not water.lake_polygons:
-        return None
-    vfmt = GeomVertexFormat.getV3n3()
-    vdata = GeomVertexData("water_poly", vfmt, Geom.UHStatic)
-    vw = GeomVertexWriter(vdata, "vertex")
-    nw = GeomVertexWriter(vdata, "normal")
-    prim = GeomTriangles(Geom.UHStatic)
-    vi = 0
-    for poly, surface_z in water.lake_polygons:
-        # Proportional max_seg: fine for small ponds, coarser for big lakes.
-        max_seg = max(30.0, poly.area ** 0.5 / 20.0)
-        for tri_coords in _triangulate_flat_poly(poly, max_seg):
-            for (x, y) in tri_coords:
-                vw.addData3(float(x), float(y), float(surface_z))
-                nw.addData3(0.0, 0.0, 1.0)
-            prim.addVertices(vi, vi + 1, vi + 2)
-            vi += 3
-    if vi == 0:
-        return None
-    vdata.setNumRows(vi)
-    prim.closePrimitive()
-    geom = Geom(vdata)
-    geom.addPrimitive(prim)
-    node = GeomNode("water_poly")
-    node.addGeom(geom)
-    node.setAttrib(DepthOffsetAttrib.make(2))
-    return node
-
-
-def _build_water_river_node(water: WaterData) -> GeomNode | None:
-    """Terrain-following polylines for rivers, streams, and canals."""
-    if not water.rivers:
-        return None
-    ls = LineSegs("rivers")
-    ls.setColor(0.15, 0.45, 0.75, 1.0)
-    ls.setThickness(2.0)
-    for river in water.rivers:
-        ls.moveTo(float(river[0, 0]), float(river[0, 1]), float(river[0, 2]))
-        for pt in river[1:]:
-            ls.drawTo(float(pt[0]), float(pt[1]), float(pt[2]))
-    return ls.create()
-
-
-def _build_coastline_node(coast: CoastlineData, z: float) -> GeomNode | None:
-    if not coast.polylines:
-        return None
-    ls = LineSegs("coastline")
-    ls.setColor(1.0, 0.85, 0.2, 1.0)
-    ls.setThickness(2.0)
-    for poly in coast.polylines:
-        ls.moveTo(float(poly[0, 0]), float(poly[0, 1]), z)
-        for p in poly[1:]:
-            ls.drawTo(float(p[0]), float(p[1]), z)
-    return ls.create()
+    if layer.polylines is not None:
+        ls = LineSegs(layer.name + "_lines")
+        ls.setColor(*layer.color)
+        ls.setThickness(layer.line_thickness)
+        for polyline in layer.polylines:
+            if len(polyline) < 2:
+                continue
+            ls.moveTo(float(polyline[0, 0]), float(polyline[0, 1]), float(polyline[0, 2]))
+            for pt in polyline[1:]:
+                ls.drawTo(float(pt[0]), float(pt[1]), float(pt[2]))
+        line_np = parent.attachNewNode(ls.create())
+        if not layer.lit:
+            line_np.setLightOff()
 
 
 class TerrainViewer(ShowBase):
     MOVE_KEYS = ("w", "a", "s", "d", "q", "e")
 
     def __init__(self, terrain: TerrainData,
-                 coastline: CoastlineData | None = None,
-                 sea_z: float | None = None,
-                 sea_polygon=None,
-                 water: WaterData | None = None):
+                 layers: list[RenderLayer] | None = None):
         ShowBase.__init__(self)
 
         props = WindowProperties()
@@ -255,35 +116,8 @@ class TerrainViewer(ShowBase):
 
         self.setBackgroundColor(0.53, 0.70, 0.86, 1.0)
 
-        terrain_node = _build_terrain_node(terrain)
-        terrain_np = self.render.attachNewNode(terrain_node)
-        terrain_np.setColor(Vec4(0.45, 0.55, 0.35, 1.0))
-
-        r = float(terrain.radius_m)
-
-        if water is not None:
-            water_poly_node = _build_water_poly_node(water)
-            if water_poly_node is not None:
-                water_poly_np = self.render.attachNewNode(water_poly_node)
-                water_poly_np.setColor(Vec4(0.15, 0.40, 0.65, 1.0))
-                water_poly_np.setTwoSided(True)
-            water_river_node = _build_water_river_node(water)
-            if water_river_node is not None:
-                water_river_np = self.render.attachNewNode(water_river_node)
-                water_river_np.setLightOff()
-
-        if sea_z is not None:
-            sea_np = self.render.attachNewNode(
-                _build_sea_node(sea_z, extent=r * 20.0,
-                                sea_polygon=sea_polygon, radius_m=r))
-            sea_np.setColor(Vec4(0.08, 0.25, 0.40, 1.0))
-            sea_np.setTwoSided(True)
-
-            if coastline is not None:
-                coast_node = _build_coastline_node(coastline, z=sea_z + 0.5)
-                if coast_node is not None:
-                    coast_np = self.render.attachNewNode(coast_node)
-                    coast_np.setLightOff()
+        for layer in (layers or []):
+            _layer_to_np(layer, self.render)
 
         ambient = AmbientLight("ambient")
         ambient.setColor(Vec4(0.35, 0.35, 0.40, 1.0))
@@ -295,6 +129,7 @@ class TerrainViewer(ShowBase):
         sun_np.setHpr(-30, -50, 0)
         self.render.setLight(sun_np)
 
+        r = float(terrain.radius_m)
         self.disableMouse()
         self.camera.setPos(0.0, -r * 1.5, r * 0.8)
         self.heading = 0.0
@@ -394,9 +229,5 @@ class TerrainViewer(ShowBase):
 
 
 def run_viewer(terrain: TerrainData,
-               coastline: CoastlineData | None = None,
-               sea_z: float | None = None,
-               sea_polygon=None,
-               water: WaterData | None = None) -> None:
-    TerrainViewer(terrain, coastline=coastline, sea_z=sea_z,
-                  sea_polygon=sea_polygon, water=water).run()
+               layers: list[RenderLayer] | None = None) -> None:
+    TerrainViewer(terrain, layers=layers).run()

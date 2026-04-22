@@ -52,6 +52,7 @@ def main(lat, lon, radius_m, grid, cache_dir, fetch_only, refresh_cache, verbose
 def run(cfg: Config, frame) -> None:
     from osm3denv.fetch import osm as osm_fetch
     from osm3denv.fetch import srtm as srtm_fetch
+    from osm3denv.layer import RenderLayer
     from osm3denv.mesh import coastline as coastline_mesh
     from osm3denv.mesh import sea as sea_mesh
     from osm3denv.mesh import terrain as terrain_mesh
@@ -80,26 +81,34 @@ def run(cfg: Config, frame) -> None:
              len(terrain.vertices), len(terrain.indices) // 3,
              float(terrain.heightmap.min()), float(terrain.heightmap.max()))
 
-    coastline = coastline_mesh.build(osm_data, frame, cfg.radius_m)
-    log.info("coastline: %d polylines (%d vertices)",
-             len(coastline.polylines),
-             sum(len(p) for p in coastline.polylines))
+    # Sea plane sits 0.3 m below absolute sea level so low-lying shore terrain
+    # does not Z-fight the plane at the coast.
+    sea_z = -terrain.origin_alt_m - 0.3
 
-    water = water_mesh.build(osm_data, frame, cfg.radius_m,
-                             terrain.heightmap, terrain.origin_alt_m)
-    log.info("water: %d lake polygons, %d river segments",
-             len(water.lake_polygons), len(water.rivers))
+    layers: list[RenderLayer] = [terrain_mesh.terrain_to_layer(terrain)]
+
+    if sea_polygon is not None:
+        layers.append(sea_mesh.build_sea_layer(
+            sea_polygon, cfg.radius_m, sea_z, cfg.radius_m * 20.0))
+
+    coast_layers = coastline_mesh.build(osm_data, frame, cfg.radius_m,
+                                        z=sea_z + 0.5)
+    if coast_layers:
+        n_polylines = sum(len(la.polylines) for la in coast_layers
+                          if la.polylines is not None)
+        log.info("coastline: %d polylines", n_polylines)
+    layers.extend(coast_layers)
+
+    water_layers = water_mesh.build(osm_data, frame, cfg.radius_m,
+                                    terrain.heightmap, terrain.origin_alt_m)
+    layers.extend(water_layers)
 
     if cfg.fetch_only:
         log.info("fetch-only: done.")
         return
 
-    # Sea sits 0.3 m below absolute sea level so low shore terrain (SRTM
-    # cells near 0 m) does not Z-fight the plane at the coast.
-    sea_z = -terrain.origin_alt_m - 0.3
     from osm3denv.render.app import run_viewer
-    run_viewer(terrain, coastline=coastline, sea_z=sea_z,
-               sea_polygon=sea_polygon, water=water)
+    run_viewer(terrain, layers=layers)
 
 
 if __name__ == "__main__":

@@ -26,6 +26,7 @@ from typing import Callable
 import numpy as np
 
 from osm3denv.frame import Frame
+from osm3denv.layer import RenderLayer
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +40,18 @@ class TerrainData:
     heightmap: np.ndarray  # (G, G) float32 — zero-centred at origin
     radius_m: float
     origin_alt_m: float    # absolute SRTM altitude of the origin
+
+
+def terrain_to_layer(terrain: TerrainData) -> RenderLayer:
+    """Wrap a ``TerrainData`` as a ``RenderLayer`` for the generic renderer."""
+    return RenderLayer(
+        name="terrain",
+        vertices=terrain.vertices,
+        normals=terrain.normals,
+        uvs=terrain.uvs,
+        indices=terrain.indices,
+        color=(0.45, 0.55, 0.35, 1.0),
+    )
 
 
 def build(*, frame: Frame, radius_m: float, grid: int,

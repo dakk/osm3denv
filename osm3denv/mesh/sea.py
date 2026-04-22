@@ -21,6 +21,8 @@ import shapely.ops
 
 from osm3denv.fetch.osm import OSMData, OSMWay
 from osm3denv.frame import Frame
+from osm3denv.layer import RenderLayer
+from osm3denv.mesh.utils import triangulate_flat_poly
 
 log = logging.getLogger(__name__)
 
@@ -61,6 +63,48 @@ def _on_sea_side(poly: sg.Polygon, coast_lines: list[sg.LineString]) -> bool:
                 best_d = d
                 best_cross = dx * (py - ay) - dy * (px - ax)
     return best_cross < 0.0
+
+
+def build_sea_layer(sea_polygon, radius_m: float,
+                    sea_z: float, extent: float) -> RenderLayer:
+    """Build a flat sea-plane ``RenderLayer``.
+
+    Within the terrain bbox the mesh follows *sea_polygon* exactly.
+    Outside the bbox eight pre-computed CCW triangles fill the rectangular
+    frame out to *extent* (no Shapely needed for that part).
+    """
+    r, e = radius_m, extent
+
+    # Outer frame: 4 trapezoid quads → 8 CCW triangles (winding pre-verified).
+    outer = [
+        [(-e, e), (r, r), (e, e)],   [(-e, e), (-r, r), (r, r)],   # N
+        [(-e,-e), (e,-e), (r,-r)],   [(-e,-e), (r,-r), (-r,-r)],   # S
+        [(-e,-e), (-r, r), (-e, e)], [(-e,-e), (-r,-r), (-r, r)],  # W
+        [(e, -e), (e, e), (r, r)],   [(e, -e), (r, r), (r,-r)],    # E
+    ]
+
+    inner: list[list[tuple[float, float]]] = []
+    if sea_polygon is not None and not sea_polygon.is_empty:
+        clipped = sea_polygon.intersection(sg.box(-r, -r, r, r))
+        if not clipped.is_empty:
+            inner = triangulate_flat_poly(clipped, max_seg=max(30.0, r / 30.0))
+
+    all_tris = outer + inner
+    verts = np.array(
+        [[x, y, sea_z] for tri in all_tris for (x, y) in tri],
+        dtype=np.float32,
+    )
+    norms = np.zeros_like(verts)
+    norms[:, 2] = 1.0
+
+    return RenderLayer(
+        name="sea",
+        vertices=verts,
+        normals=norms,
+        color=(0.08, 0.25, 0.40, 1.0),
+        depth_offset=1,
+        two_sided=True,
+    )
 
 
 def build_sea_polygon(osm: OSMData, frame: Frame,

@@ -15,7 +15,6 @@ Open ways with waterway=river/stream/canal/ditch/drain are stored as
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
 
 import numpy as np
 import shapely.geometry as sg
@@ -23,6 +22,8 @@ import shapely.ops
 
 from osm3denv.fetch.osm import OSMData
 from osm3denv.frame import Frame
+from osm3denv.layer import RenderLayer
+from osm3denv.mesh.utils import sample_z, triangulate_flat_poly
 
 log = logging.getLogger(__name__)
 
@@ -43,41 +44,6 @@ def _is_river_line(tags: dict) -> bool:
     return tags.get("waterway") in _RIVER_LINE_VALUES
 
 
-@dataclass
-class WaterData:
-    # Each entry: (shapely Polygon/MultiPolygon in ENU coords, surface z)
-    lake_polygons: list = field(default_factory=list)
-    # Each entry: (N, 3) float32 — east, north, z (terrain-following + offset)
-    rivers: list = field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
-# Private helpers
-# ---------------------------------------------------------------------------
-
-def _grid_coords(x: float, y: float, grid: int, radius_m: float) -> tuple[float, float]:
-    col = (x + radius_m) / (2.0 * radius_m) * (grid - 1)
-    row = (radius_m - y) / (2.0 * radius_m) * (grid - 1)
-    return float(np.clip(row, 0, grid - 1)), float(np.clip(col, 0, grid - 1))
-
-
-def _bilinear(arr: np.ndarray, row_f: float, col_f: float, grid: int) -> float:
-    r0 = min(int(row_f), grid - 2)
-    c0 = min(int(col_f), grid - 2)
-    fr, fc = row_f - r0, col_f - c0
-    return float(
-        arr[r0,   c0  ] * (1 - fr) * (1 - fc) +
-        arr[r0,   c0+1] * (1 - fr) * fc +
-        arr[r0+1, c0  ] * fr       * (1 - fc) +
-        arr[r0+1, c0+1] * fr       * fc
-    )
-
-
-def _sample_z(x: float, y: float, heightmap: np.ndarray, grid: int, radius_m: float) -> float:
-    row, col = _grid_coords(x, y, grid, radius_m)
-    return _bilinear(heightmap, row, col, grid)
-
-
 def _to_enu(lons, lats, frame: Frame) -> np.ndarray:
     east, north = frame.to_enu(
         np.array(lons, dtype=np.float64),
@@ -86,7 +52,7 @@ def _to_enu(lons, lats, frame: Frame) -> np.ndarray:
     return np.stack([east, north], axis=-1).astype(np.float32)
 
 
-def _ring_enu(ring: list[tuple[float, float]], frame: Frame) -> list[tuple[float, float]]:
+def _ring_enu(ring, frame: Frame) -> list[tuple[float, float]]:
     lons = [p[0] for p in ring]
     lats = [p[1] for p in ring]
     east, north = frame.to_enu(np.array(lons, dtype=np.float64),
@@ -96,12 +62,12 @@ def _ring_enu(ring: list[tuple[float, float]], frame: Frame) -> list[tuple[float
 
 def _surface_z(poly, heightmap: np.ndarray, grid: int, radius_m: float,
                offset: float = 0.2) -> float:
-    """Mean terrain height at the exterior ring vertices, plus *offset* metres."""
+    """Mean terrain height at exterior ring vertices plus *offset* metres."""
     if poly.geom_type == "MultiPolygon":
         coords = list(poly.geoms[0].exterior.coords)
     else:
         coords = list(poly.exterior.coords)
-    heights = [_sample_z(x, y, heightmap, grid, radius_m) for x, y in coords]
+    heights = [sample_z(x, y, heightmap, grid, radius_m) for x, y in coords]
     return float(np.mean(heights)) + offset
 
 
@@ -115,18 +81,14 @@ def _add_polygon(poly, heightmap, grid, radius_m, bbox, out_polygons):
         return
     if clipped.geom_type not in ("Polygon", "MultiPolygon"):
         return
-    if clipped.area < 10.0:   # skip slivers < 10 m²
+    if clipped.area < 10.0:
         return
     z = _surface_z(clipped, heightmap, grid, radius_m)
     out_polygons.append((clipped, z))
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
 def build(osm: OSMData, frame: Frame, radius_m: float,
-          heightmap: np.ndarray, h0: float) -> WaterData:
+          heightmap: np.ndarray, h0: float) -> list[RenderLayer]:
     """Extract water polygons and river polylines from *osm*.
 
     Parameters
@@ -140,7 +102,7 @@ def build(osm: OSMData, frame: Frame, radius_m: float,
     grid = heightmap.shape[0]
     r = float(radius_m)
     bbox = sg.box(-r, -r, r, r)
-    data = WaterData()
+    lake_polygons: list[tuple] = []
 
     # ------------------------------------------------------------------
     # Closed-way water-area polygons
@@ -148,7 +110,7 @@ def build(osm: OSMData, frame: Frame, radius_m: float,
     for way in osm.filter_ways(_is_water_area):
         geom = way.geometry
         if len(geom) < 3 or geom[0] != geom[-1]:
-            continue                          # skip open / degenerate ways
+            continue
         pts = _to_enu([g[0] for g in geom], [g[1] for g in geom], frame)
         try:
             poly = sg.Polygon(pts)
@@ -156,7 +118,7 @@ def build(osm: OSMData, frame: Frame, radius_m: float,
                 poly = poly.buffer(0)
         except Exception:
             continue
-        _add_polygon(poly, heightmap, grid, radius_m, bbox, data.lake_polygons)
+        _add_polygon(poly, heightmap, grid, radius_m, bbox, lake_polygons)
 
     # ------------------------------------------------------------------
     # Relation water-area polygons (lakes with islands, large rivers)
@@ -176,11 +138,12 @@ def build(osm: OSMData, frame: Frame, radius_m: float,
                 poly = poly.buffer(0)
         except Exception:
             continue
-        _add_polygon(poly, heightmap, grid, radius_m, bbox, data.lake_polygons)
+        _add_polygon(poly, heightmap, grid, radius_m, bbox, lake_polygons)
 
     # ------------------------------------------------------------------
     # River / stream / canal centre-lines
     # ------------------------------------------------------------------
+    river_polylines: list[np.ndarray] = []
     for way in osm.filter_ways(_is_river_line):
         geom = way.geometry
         if len(geom) < 2:
@@ -191,17 +154,46 @@ def build(osm: OSMData, frame: Frame, radius_m: float,
         for i in range(len(pts)):
             if inside[i]:
                 x, y = float(pts[i, 0]), float(pts[i, 1])
-                z = _sample_z(x, y, heightmap, grid, radius_m) + 0.3
+                z = sample_z(x, y, heightmap, grid, radius_m) + 0.3
                 segment.append([x, y, z])
             elif segment:
                 if len(segment) >= 2:
-                    data.rivers.append(np.array(segment, dtype=np.float32))
+                    river_polylines.append(np.array(segment, dtype=np.float32))
                 segment = []
         if len(segment) >= 2:
-            data.rivers.append(np.array(segment, dtype=np.float32))
+            river_polylines.append(np.array(segment, dtype=np.float32))
 
-    log.info(
-        "water: %d lake/pond polygons, %d river/stream segments",
-        len(data.lake_polygons), len(data.rivers),
-    )
-    return data
+    log.info("water: %d lake/pond polygons, %d river/stream segments",
+             len(lake_polygons), len(river_polylines))
+
+    layers: list[RenderLayer] = []
+
+    if lake_polygons:
+        all_tris: list[list[tuple]] = []
+        for poly, surface_z in lake_polygons:
+            max_seg = max(30.0, poly.area ** 0.5 / 20.0)
+            for tri_coords in triangulate_flat_poly(poly, max_seg):
+                all_tris.append([(x, y, surface_z) for (x, y) in tri_coords])
+        if all_tris:
+            verts = np.array(all_tris, dtype=np.float32).reshape(-1, 3)
+            norms = np.zeros_like(verts)
+            norms[:, 2] = 1.0
+            layers.append(RenderLayer(
+                name="water_lakes",
+                vertices=verts,
+                normals=norms,
+                color=(0.15, 0.40, 0.65, 1.0),
+                depth_offset=2,
+                two_sided=True,
+            ))
+
+    if river_polylines:
+        layers.append(RenderLayer(
+            name="water_rivers",
+            polylines=river_polylines,
+            line_thickness=2.0,
+            color=(0.15, 0.45, 0.75, 1.0),
+            lit=False,
+        ))
+
+    return layers
