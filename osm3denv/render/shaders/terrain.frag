@@ -22,6 +22,10 @@ uniform sampler2D u_beach_sand_col;  // beach-specific wet sand diffuse
 uniform sampler2D u_beach_sand_nrm;
 uniform float     u_bump_strength;   // XY amplifier for normal maps (default 3)
 
+uniform vec3 u_sun_dir;    // normalised direction toward the sun
+uniform vec3 u_sun_color;  // sun light colour (black at night)
+uniform vec3 u_amb_color;  // ambient light colour
+
 in vec3 vWorldPos;
 in vec3 vWorldNormal;
 
@@ -177,14 +181,10 @@ void main() {
     color = mix(color, dirt, road_w * 0.88);
 
     // ------------------------------------------------------------------
-    // Lighting: Lambertian diffuse + ambient (sun matches app.py light)
+    // Lighting: Lambertian diffuse + ambient (driven by day/night cycle)
     // ------------------------------------------------------------------
-    vec3 sunDir   = normalize(vec3(0.35, 0.60, 0.72));
-    vec3 sunColor = vec3(0.95, 0.92, 0.85);
-    vec3 ambColor = vec3(0.35, 0.37, 0.42);
-
-    float diff = max(dot(N, sunDir), 0.0);
-    color = color * (ambColor + sunColor * diff * 0.80);
+    float diff = max(dot(N, u_sun_dir), 0.0);
+    color = color * (u_amb_color + u_sun_color * diff * 0.80);
 
     p3d_FragColor = vec4(color, 1.0);
 }

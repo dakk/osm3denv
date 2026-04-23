@@ -1,6 +1,7 @@
 #version 330 core
 
 uniform float osg_FrameTime;
+uniform vec3  u_sky_color;   // drives cloud tint and night dimming
 
 in vec2 v_uv;   // x = azimuth/2π, y = elevation/halfπ
 in vec3 v_dir;  // normalised sphere-surface direction
@@ -60,6 +61,14 @@ void main() {
 
     // Bright top, slightly blue-grey underside
     vec3 col = mix(vec3(0.72, 0.76, 0.84), vec3(1.0, 1.0, 1.0), pow(elev, 0.4));
+
+    // Tint toward sky colour at low elevations (sunrise/sunset glow)
+    float warmth = clamp(u_sky_color.r - u_sky_color.b, 0.0, 1.0);
+    col = mix(col, col * vec3(1.0 + warmth * 0.6, 1.0 + warmth * 0.1, 1.0), 1.0 - elev);
+
+    // Dim at night based on sky luminance
+    float sky_lum = dot(u_sky_color, vec3(0.299, 0.587, 0.114));
+    col *= clamp(sky_lum * 6.0 + 0.08, 0.08, 1.0);
 
     p3d_FragColor = vec4(col, cloud * 0.90);
 }

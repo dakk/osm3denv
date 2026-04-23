@@ -7,6 +7,10 @@
 uniform float osg_FrameTime;
 uniform mat4 p3d_ViewMatrixInverse;
 
+uniform vec3 u_sun_dir;
+uniform vec3 u_sun_color;
+uniform vec3 u_sky_color;
+
 in vec3 vWorldPos;
 in vec2 vOrigXY;
 
@@ -47,12 +51,9 @@ void main() {
     vec3  cam = p3d_ViewMatrixInverse[3].xyz;
     vec3  V   = normalize(cam - vWorldPos);
 
-    // Sun direction — matches DirectionalLight HPR(-30,-50,0).
-    vec3 sunDir   = normalize(vec3(0.35, 0.60, 0.72));
-    vec3 sunColor = vec3(1.00, 0.96, 0.88);
-
-    // Sky colour for Fresnel reflection approximation.
-    vec3 skyColor = vec3(0.53, 0.70, 0.86);
+    vec3 sunDir   = u_sun_dir;
+    vec3 sunColor = u_sun_color;
+    vec3 skyColor = u_sky_color;
 
     // Schlick Fresnel, F0=0.04.
     float cosA    = max(dot(N, V), 0.0);
