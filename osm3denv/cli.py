@@ -28,8 +28,12 @@ log = logging.getLogger("osm3denv")
 @click.option("--dem-zoom", type=click.IntRange(10, 15), default=None, show_default=True,
               help="Terrarium tile zoom level (10-15). Auto-selected if omitted; "
                    "use 15 for ~4.5 m/px, 14 for ~9 m/px.")
+@click.option("--no-roads",      is_flag=True, help="Skip road rendering.")
+@click.option("--no-powerlines", is_flag=True, help="Skip power line rendering.")
+@click.option("--no-vegetation", is_flag=True, help="Skip vegetation rendering.")
 @click.option("-v", "--verbose", count=True, help="Increase log verbosity (-v, -vv).")
-def main(lat, lon, radius_m, grid, cache_dir, fetch_only, refresh_cache, dem_zoom, verbose):
+def main(lat, lon, radius_m, grid, cache_dir, fetch_only, refresh_cache, dem_zoom,
+         no_roads, no_powerlines, no_vegetation, verbose):
     """Render a 3D terrain around (lat, lon) from SRTM and OSM data."""
     _logging.configure(verbose)
 
@@ -49,10 +53,15 @@ def main(lat, lon, radius_m, grid, cache_dir, fetch_only, refresh_cache, dem_zoo
              cfg.lat, cfg.lon, cfg.radius_m, cfg.grid, cfg.cache_dir)
 
     frame = make_frame(cfg.lat, cfg.lon)
-    run(cfg, frame)
+    run(cfg, frame, no_roads=no_roads, no_powerlines=no_powerlines,
+        no_vegetation=no_vegetation)
 
 
-def run(cfg: Config, frame) -> None:
+def run(cfg: Config, frame, *,
+        no_roads: bool = False,
+        no_powerlines: bool = False,
+        no_vegetation: bool = False) -> None:
+    from osm3denv.entities.beach import Beach
     from osm3denv.entities.coastline import Coastline
     from osm3denv.entities.powerlines import PowerLines
     from osm3denv.entities.roads import Roads
@@ -62,11 +71,14 @@ def run(cfg: Config, frame) -> None:
     from osm3denv.entities.water import Water
     from osm3denv.fetch import osm as osm_fetch
     from osm3denv.fetch import terrarium as dem_fetch
+    from osm3denv.fetch import textures as tex_fetch
 
     osm_data = osm_fetch.fetch(frame=frame, radius_m=cfg.radius_m,
                                cache_dir=cfg.osm_cache, refresh=cfg.refresh_cache)
     log.info("osm: %d ways, %d relations, %d nodes",
              len(osm_data.ways), len(osm_data.relations), len(osm_data.nodes))
+
+    tex_paths = tex_fetch.fetch(cfg.tex_cache)
 
     # Phase 1 — sea polygon (Terrain needs it to clamp underwater vertices).
     sea = Sea(osm_data, frame, cfg.radius_m)
@@ -78,6 +90,7 @@ def run(cfg: Config, frame) -> None:
         hgt_loader=dem_fetch.loader(cfg.srtm_cache, zoom=cfg.dem_zoom,
                                     refresh=cfg.refresh_cache),
         sea_polygon=sea.polygon,
+        tex_paths=tex_paths,
     )
     terrain.build()
 
@@ -90,21 +103,32 @@ def run(cfg: Config, frame) -> None:
     water = Water(osm_data, frame, cfg.radius_m, terrain)
     water.build()
 
-    roads = Roads(osm_data, frame, cfg.radius_m)
-    roads.build()
+    beach = Beach(osm_data, frame, cfg.radius_m)
+    beach.build()
 
-    powerlines = PowerLines(osm_data, frame, cfg.radius_m, terrain)
-    powerlines.build()
+    entities = [terrain, sea, coastline, water, beach]
 
-    vegetation = Vegetation(osm_data, frame, cfg.radius_m, terrain)
-    vegetation.build()
+    if not no_roads:
+        roads = Roads(osm_data, frame, cfg.radius_m)
+        roads.build()
+        entities.append(roads)
+
+    if not no_powerlines:
+        powerlines = PowerLines(osm_data, frame, cfg.radius_m, terrain)
+        powerlines.build()
+        entities.append(powerlines)
+
+    if not no_vegetation:
+        vegetation = Vegetation(osm_data, frame, cfg.radius_m, terrain)
+        vegetation.build()
+        entities.append(vegetation)
 
     if cfg.fetch_only:
         log.info("fetch-only: done.")
         return
 
     from osm3denv.render.app import run_viewer
-    run_viewer(terrain, entities=[terrain, sea, coastline, water, roads, powerlines, vegetation], frame=frame)
+    run_viewer(terrain, entities=entities, frame=frame)
 
 
 if __name__ == "__main__":

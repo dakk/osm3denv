@@ -71,6 +71,8 @@ def _build_query(bbox_ll: tuple[float, float, float, float]) -> str:
   way["highway"]({bb});
   way["natural"="water"]({bb});
   way["natural"="coastline"]({bb});
+  way["natural"="beach"]({bb});
+  relation["natural"="beach"]({bb});
   way["waterway"~"river|stream|canal|ditch|drain"]({bb});
   way["waterway"="riverbank"]({bb});
   way["landuse"="reservoir"]({bb});

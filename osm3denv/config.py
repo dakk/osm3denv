@@ -27,6 +27,10 @@ class Config:
         p.mkdir(parents=True, exist_ok=True)
         return p
 
+    @property
+    def tex_cache(self) -> Path:
+        return self.cache_dir / "textures"
+
 
 def default_cache_dir() -> Path:
     return Path(user_cache_dir("osm3denv"))

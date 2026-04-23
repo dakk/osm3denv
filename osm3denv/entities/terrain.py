@@ -13,6 +13,28 @@ from osm3denv.frame import Frame
 log = logging.getLogger(__name__)
 
 
+def _load_texture(path, fallback_rgb: bytes, *, srgb: bool):
+    """Load a texture from *path*, or create a 1×1 solid fallback."""
+    from panda3d.core import Filename, Texture
+    tex = Texture()
+    if path is not None:
+        try:
+            tex.read(Filename.fromOsSpecific(str(path)))
+            tex.setMinfilter(Texture.FT_linear_mipmap_linear)
+            tex.setMagfilter(Texture.FT_linear)
+            tex.setWrapU(Texture.WM_repeat)
+            tex.setWrapV(Texture.WM_repeat)
+            if srgb:
+                tex.setFormat(Texture.F_srgb)
+            return tex
+        except Exception as exc:
+            log.warning("could not load texture %s: %s", path, exc)
+    # 1×1 solid fallback
+    tex.setup2dTexture(1, 1, Texture.T_unsigned_byte, Texture.F_rgb)
+    tex.setRamImage(fallback_rgb)
+    return tex
+
+
 @dataclass
 class TerrainData:
     vertices:     np.ndarray   # (N, 3) float32  — (east, north, height)
@@ -42,12 +64,14 @@ class Terrain(MapEntity):
     SHADER = "terrain"
 
     def __init__(self, frame: Frame, radius_m: float, grid: int,
-                 hgt_loader: Callable, sea_polygon=None) -> None:
+                 hgt_loader: Callable, sea_polygon=None,
+                 tex_paths: dict | None = None) -> None:
         self._frame = frame
         self._radius_m = radius_m
         self._grid = grid
         self._hgt_loader = hgt_loader
         self._sea_polygon = sea_polygon
+        self._tex_paths = tex_paths or {}
         self._data: TerrainData | None = None
 
     def build(self) -> None:
@@ -111,7 +135,7 @@ class Terrain(MapEntity):
         return self._data
 
     def attach_to(self, parent) -> None:
-        from panda3d.core import Texture
+        from panda3d.core import Filename, Texture
         from osm3denv.render.helpers import attach_mesh, load_shader
         td = self.data
         np_ = attach_mesh(parent, "terrain", td.vertices, td.normals, td.uvs, td.indices)
@@ -120,8 +144,25 @@ class Terrain(MapEntity):
             np_.setShader(shader)
             np_.setShaderInput("u_origin_alt_m", float(td.origin_alt_m))
             np_.setShaderInput("u_radius_m",     float(td.radius_m))
+            np_.setShaderInput("u_tex_scale",     20.0)
+            np_.setShaderInput("u_bump_strength", 3.0)
             # Blank 1×1 splatmap — Roads.attach_to() overrides this if roads exist.
-            blank = Texture("road_splatmap")
-            blank.setup2dTexture(1, 1, Texture.T_unsigned_byte, Texture.F_luminance)
-            blank.setRamImage(bytes([0]))
-            np_.setShaderInput("u_road_splatmap", blank)
+            for smap_name in ("u_road_splatmap", "u_beach_splatmap"):
+                blank = Texture(smap_name)
+                blank.setup2dTexture(1, 1, Texture.T_unsigned_byte, Texture.F_luminance)
+                blank.setRamImage(bytes([0]))
+                np_.setShaderInput(smap_name, blank)
+            # Terrain textures (sand / grass / rock)
+            _FALLBACKS = {
+                "sand":       (bytes([199, 184, 133]), bytes([128, 128, 255])),
+                "grass":      (bytes([ 77, 125,  41]), bytes([128, 128, 255])),
+                "rock":       (bytes([112, 102,  89]), bytes([128, 128, 255])),
+                "beach_sand": (bytes([210, 195, 155]), bytes([128, 128, 255])),
+            }
+            for name, (fb_col, fb_nrm) in _FALLBACKS.items():
+                col_path = self._tex_paths.get(name, {}).get("color")
+                nrm_path = self._tex_paths.get(name, {}).get("normal")
+                col_tex = _load_texture(col_path, fb_col, srgb=True)
+                nrm_tex = _load_texture(nrm_path, fb_nrm, srgb=False)
+                np_.setShaderInput(f"u_{name}_col", col_tex)
+                np_.setShaderInput(f"u_{name}_nrm", nrm_tex)
