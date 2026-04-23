@@ -296,11 +296,11 @@ class HouseBuilder:
         trim_rgb = rng.choice([(240,237,230),(250,245,235),(225,222,215)])
         trim_tex = self._s(*trim_rgb)
         fi_glass = {"u_col_tex": self._glass_tex, "u_nrm_tex": self._flat_nrm,
-                    "u_bump_strength": 0.0, "u_specular": 1.0}
+                    "u_bump_strength": 0.0}
         fi_trim  = {"u_col_tex": trim_tex, "u_nrm_tex": self._flat_nrm,
-                    "u_bump_strength": 0.0, "u_specular": 0.0}
+                    "u_bump_strength": 0.0}
         if glass_parts:
-            glass_np = _attach(root, "glass", _merge(*glass_parts), sh, fi_glass)
+            glass_np = _attach(root, "glass", _merge(*glass_parts), self._glass_sh, fi_glass)
             if glass_np:
                 glass_np.setTwoSided(True)
         if frame_parts:
