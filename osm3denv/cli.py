@@ -58,6 +58,7 @@ def run(cfg: Config, frame) -> None:
     from osm3denv.entities.roads import Roads
     from osm3denv.entities.sea import Sea
     from osm3denv.entities.terrain import Terrain
+    from osm3denv.entities.vegetation import Vegetation
     from osm3denv.entities.water import Water
     from osm3denv.fetch import osm as osm_fetch
     from osm3denv.fetch import terrarium as dem_fetch
@@ -95,12 +96,15 @@ def run(cfg: Config, frame) -> None:
     powerlines = PowerLines(osm_data, frame, cfg.radius_m, terrain)
     powerlines.build()
 
+    vegetation = Vegetation(osm_data, frame, cfg.radius_m, terrain)
+    vegetation.build()
+
     if cfg.fetch_only:
         log.info("fetch-only: done.")
         return
 
     from osm3denv.render.app import run_viewer
-    run_viewer(terrain, entities=[terrain, sea, coastline, water, roads, powerlines], frame=frame)
+    run_viewer(terrain, entities=[terrain, sea, coastline, water, roads, powerlines, vegetation], frame=frame)
 
 
 if __name__ == "__main__":
