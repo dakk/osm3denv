@@ -16,12 +16,14 @@ import math
 import sys
 
 import numpy as np
+from direct.filter.CommonFilters import CommonFilters
 from direct.gui.OnscreenText import OnscreenText
 from direct.showbase.ShowBase import ShowBase
 from direct.task import Task
 from panda3d.core import (
     AmbientLight, DirectionalLight,
     LVector3, TextNode, Vec4, WindowProperties,
+    loadPrcFileData,
 )
 
 from osm3denv.entity import MapEntity
@@ -36,6 +38,7 @@ class TerrainViewer(ShowBase):
     def __init__(self, terrain: Terrain,
                  entities: list[MapEntity] | None = None,
                  frame=None, minimap=None) -> None:
+        loadPrcFileData("", "framebuffer-multisample 1\nmultisamples 4")
         ShowBase.__init__(self)
         self._frame = frame
         self._origin_alt_m = float(terrain.data.origin_alt_m)
@@ -57,6 +60,14 @@ class TerrainViewer(ShowBase):
         sun_np = self.render.attachNewNode(sun)
         sun_np.setHpr(-30, -50, 0)
         self.render.setLight(sun_np)
+
+        filters = CommonFilters(self.win, self.cam)
+        if filters.setBloom(size="large", mintrigger=0.4, maxtrigger=0.8,
+                            intensity=0.6, desat=0.3):
+            self._filters = filters
+        else:
+            log.warning("bloom post-processing not supported on this GPU")
+            self._filters = None
 
         r = float(terrain.data.radius_m)
         self.disableMouse()

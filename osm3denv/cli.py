@@ -65,6 +65,7 @@ def run(cfg: Config, frame, *,
         no_buildings: bool = False) -> None:
     from osm3denv.entities.beach import Beach
     from osm3denv.entities.buildings import Buildings
+    from osm3denv.entities.clouds import Clouds
     from osm3denv.entities.coastline import Coastline
     from osm3denv.entities.powerlines import PowerLines
     from osm3denv.entities.roads import Roads
@@ -115,7 +116,10 @@ def run(cfg: Config, frame, *,
     beach = Beach(osm_data, frame, cfg.radius_m)
     beach.build()
 
-    entities = [terrain, sea, coastline, water, beach]
+    clouds = Clouds(cfg.radius_m)
+    clouds.build()
+
+    entities = [terrain, sea, coastline, water, beach, clouds]
 
     if not no_roads:
         roads = Roads(osm_data, frame, cfg.radius_m)
