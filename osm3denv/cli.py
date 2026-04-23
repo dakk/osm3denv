@@ -54,6 +54,7 @@ def main(lat, lon, radius_m, grid, cache_dir, fetch_only, refresh_cache, dem_zoo
 
 def run(cfg: Config, frame) -> None:
     from osm3denv.entities.coastline import Coastline
+    from osm3denv.entities.powerlines import PowerLines
     from osm3denv.entities.roads import Roads
     from osm3denv.entities.sea import Sea
     from osm3denv.entities.terrain import Terrain
@@ -91,12 +92,15 @@ def run(cfg: Config, frame) -> None:
     roads = Roads(osm_data, frame, cfg.radius_m)
     roads.build()
 
+    powerlines = PowerLines(osm_data, frame, cfg.radius_m, terrain)
+    powerlines.build()
+
     if cfg.fetch_only:
         log.info("fetch-only: done.")
         return
 
     from osm3denv.render.app import run_viewer
-    run_viewer(terrain, entities=[terrain, sea, coastline, water, roads], frame=frame)
+    run_viewer(terrain, entities=[terrain, sea, coastline, water, roads, powerlines], frame=frame)
 
 
 if __name__ == "__main__":

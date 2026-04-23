@@ -76,6 +76,8 @@ def _build_query(bbox_ll: tuple[float, float, float, float]) -> str:
   way["landuse"="reservoir"]({bb});
   relation["natural"="water"]({bb});
   relation["waterway"="riverbank"]({bb});
+  way["power"~"line|minor_line"]({bb});
+  node["power"~"tower|pole"]({bb});
 );
 out geom;
 """
