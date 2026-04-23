@@ -25,7 +25,19 @@ TERRAIN_ASSETS: dict[str, str] = {
     "sand":       "Ground026",   # fine inland / desert sand
     "grass":      "Ground037",   # grass with soil variation
     "rock":       "Rock022",     # rock face / cliff
-    "beach_sand": "Ground054",      # coarse wet beach sand
+    "beach_sand": "Ground054",   # coarse wet beach sand
+}
+
+BUILDING_ASSETS: dict[str, str] = {
+    "brick":      "Bricks026",         # red-orange clay brick (rare)
+    "plaster":    "Plaster001",        # cream painted plaster
+    "plaster_b":  "Plaster002",        # warm off-white plaster
+    "plaster_c":      "Plaster004",          # cool-tinted light plaster
+    "painted_plaster":  "PaintedPlaster004", # painted plaster variant A
+    "painted_plaster_b":"PaintedPlaster012", # painted plaster variant B
+    "painted_plaster_c":"PaintedPlaster017", # painted plaster variant C
+    "concrete":   "Concrete025",       # exposed grey concrete
+    "roof_tiles": "RoofingTiles012B",  # roof tiles
 }
 
 
@@ -87,13 +99,18 @@ def _download_asset(asset_id: str, dest_dir: Path) -> dict[str, Path] | None:
 
 
 def fetch(cache_dir: Path) -> dict[str, dict[str, Path]]:
-    """Download (once) and return ``{type: {color, normal}}`` for all terrain types.
-
-    Any type whose download fails returns an empty sub-dict so ``terrain.py``
-    can fall back to a solid 1×1 placeholder texture.
-    """
+    """Download (once) and return ``{type: {color, normal}}`` for all terrain types."""
     result: dict[str, dict[str, Path]] = {}
     for tex_type, asset_id in TERRAIN_ASSETS.items():
+        paths = _download_asset(asset_id, cache_dir / asset_id)
+        result[tex_type] = paths or {}
+    return result
+
+
+def fetch_building(cache_dir: Path) -> dict[str, dict[str, Path]]:
+    """Download (once) and return ``{type: {color, normal}}`` for building textures."""
+    result: dict[str, dict[str, Path]] = {}
+    for tex_type, asset_id in BUILDING_ASSETS.items():
         paths = _download_asset(asset_id, cache_dir / asset_id)
         result[tex_type] = paths or {}
     return result
