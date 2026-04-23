@@ -13,13 +13,19 @@ from dataclasses import dataclass
 import numpy as np
 
 from osm3denv.entity import MapEntity
-from osm3denv.entities.utils import grid_coords
 from osm3denv.fetch.osm import OSMData
 from osm3denv.frame import Frame
 
 log = logging.getLogger(__name__)
 
-_MAX_TREES_PER_TYPE = 20_000
+# ---------------------------------------------------------------------------
+# LOD parameters
+# ---------------------------------------------------------------------------
+_LOD_CELL_SIZE = 200.0   # spatial grid cell side length (m)
+_LOD_NEAR      = 600.0   # full-detail switch distance (m from cell centre)
+_LOD_FAR       = 2000.0  # reduced-detail switch distance (m); invisible beyond
+_LOD_LOW_STEP  = 3       # keep every Nth tree in the reduced-detail level
+
 
 @dataclass(frozen=True)
 class VegType:
@@ -37,70 +43,70 @@ _VEG_TYPES: dict[str, VegType] = {
     # Open parkland — deciduous, wide crowns, well-spaced
     "park": VegType(
         h_min=7.0, h_max=14.0, width_ratio=0.85, spacing=28.0, jitter=0.50,
-        budget=_MAX_TREES_PER_TYPE,
+        budget=15_000,
         color_top   =(0.22, 0.55, 0.15, 1.0),
         color_bottom=(0.12, 0.28, 0.08, 1.0),
     ),
     # Fruit trees — medium height, rounded crown, near-regular grid
     "orchard": VegType(
         h_min=3.0, h_max=6.0, width_ratio=0.95, spacing=8.0, jitter=0.08,
-        budget=_MAX_TREES_PER_TYPE,
+        budget=8_000,
         color_top   =(0.26, 0.52, 0.14, 1.0),
         color_bottom=(0.14, 0.26, 0.07, 1.0),
     ),
     # Dense low shrubs — wider than tall, olive-green
     "scrub": VegType(
         h_min=1.5, h_max=4.0, width_ratio=1.30, spacing=6.0, jitter=0.50,
-        budget=_MAX_TREES_PER_TYPE,
+        budget=30_000,
         color_top   =(0.30, 0.42, 0.15, 1.0),
         color_bottom=(0.18, 0.25, 0.10, 1.0),
     ),
     # Very short heather / gorse — brownish, sparse
     "heath": VegType(
         h_min=0.6, h_max=1.5, width_ratio=1.60, spacing=5.0, jitter=0.60,
-        budget=_MAX_TREES_PER_TYPE,
+        budget=15_000,
         color_top   =(0.38, 0.32, 0.18, 1.0),
         color_bottom=(0.22, 0.18, 0.10, 1.0),
     ),
     # Tall narrow conifers (yew / cypress) — columnar, dark green
     "cemetery": VegType(
         h_min=8.0, h_max=16.0, width_ratio=0.40, spacing=18.0, jitter=0.30,
-        budget=_MAX_TREES_PER_TYPE,
+        budget=2_000,
         color_top   =(0.08, 0.28, 0.12, 1.0),
         color_bottom=(0.04, 0.14, 0.06, 1.0),
     ),
     # Small ornamental / suburban garden trees
     "garden": VegType(
         h_min=3.0, h_max=7.0, width_ratio=0.80, spacing=12.0, jitter=0.50,
-        budget=_MAX_TREES_PER_TYPE,
+        budget=6_000,
         color_top   =(0.24, 0.52, 0.14, 1.0),
         color_bottom=(0.12, 0.28, 0.08, 1.0),
     ),
     # Specimen trees on village greens — large, spreading crown
     "village_green": VegType(
         h_min=8.0, h_max=14.0, width_ratio=1.00, spacing=25.0, jitter=0.40,
-        budget=_MAX_TREES_PER_TYPE,
+        budget=1_000,
         color_top   =(0.25, 0.55, 0.16, 1.0),
         color_bottom=(0.13, 0.28, 0.08, 1.0),
     ),
     # Small fruit / vegetable-plot trees in allotment gardens
     "allotments": VegType(
         h_min=2.0, h_max=4.0, width_ratio=0.85, spacing=8.0, jitter=0.30,
-        budget=_MAX_TREES_PER_TYPE,
+        budget=4_000,
         color_top   =(0.28, 0.50, 0.16, 1.0),
         color_bottom=(0.14, 0.26, 0.08, 1.0),
     ),
     # Default for individual natural=tree OSM nodes
     "tree": VegType(
         h_min=6.0, h_max=12.0, width_ratio=0.80, spacing=0.0, jitter=0.0,
-        budget=_MAX_TREES_PER_TYPE,
+        budget=5_000,
         color_top   =(0.22, 0.52, 0.14, 1.0),
         color_bottom=(0.12, 0.26, 0.07, 1.0),
     ),
     # Dense closed-canopy woodland — processed last so other types are not crowded out
     "forest": VegType(
         h_min=10.0, h_max=18.0, width_ratio=0.65, spacing=20.0, jitter=0.40,
-        budget=_MAX_TREES_PER_TYPE,
+        budget=50_000,
         color_top   =(0.13, 0.38, 0.08, 1.0),
         color_bottom=(0.07, 0.18, 0.04, 1.0),
     ),
@@ -128,31 +134,34 @@ def _classify(tags: dict) -> str | None:
 # Geometry helpers
 # ---------------------------------------------------------------------------
 
-def _sample_z_triangle(x: float, y: float,
-                       heightmap: np.ndarray, grid: int, radius_m: float) -> float:
-    """Return terrain surface z using the same triangle tessellation as the GPU.
+def _sample_z_triangle_vec(e_arr: np.ndarray, n_arr: np.ndarray,
+                           heightmap: np.ndarray, grid: int,
+                           radius_m: float) -> np.ndarray:
+    """Vectorized triangle-aware terrain z for arrays of (east, north) points.
 
-    The terrain mesh splits each heightmap cell into two triangles along the
-    SW→NE diagonal.  Bilinear interpolation diverges from linear-in-triangle
-    on saddle-shaped cells, placing trees below the visual surface.  This
-    function matches the GPU exactly.
+    Matches the GPU SW→NE diagonal tessellation exactly (see scalar version
+    for derivation).
     """
-    row_f, col_f = grid_coords(x, y, grid, radius_m)
-    r0 = min(int(row_f), grid - 2)
-    c0 = min(int(col_f), grid - 2)
-    fr = row_f - r0   # south fraction within cell (0 = north edge)
-    fc = col_f - c0   # east  fraction within cell (0 = west edge)
+    scale = (grid - 1) / (2.0 * radius_m)
+    col_f = np.clip((np.asarray(e_arr, np.float64) + radius_m) * scale, 0.0, grid - 1)
+    row_f = np.clip((radius_m - np.asarray(n_arr, np.float64)) * scale, 0.0, grid - 1)
 
-    z_nw = float(heightmap[r0,     c0    ])
-    z_ne = float(heightmap[r0,     c0 + 1])
-    z_sw = float(heightmap[r0 + 1, c0    ])
-    z_se = float(heightmap[r0 + 1, c0 + 1])
+    r0 = np.minimum(row_f.astype(np.int32), grid - 2)
+    c0 = np.minimum(col_f.astype(np.int32), grid - 2)
+    fr = (row_f - r0).astype(np.float32)
+    fc = (col_f - c0).astype(np.float32)
 
-    # Diagonal from SW(fr=1,fc=0) to NE(fr=0,fc=1): fr + fc == 1
-    if fr + fc >= 1.0:   # lower-right triangle: SW, SE, NE
-        return (fc + fr - 1.0) * z_se + (1.0 - fr) * z_ne + (1.0 - fc) * z_sw
-    else:                # upper-left  triangle: SW, NE, NW
-        return fc * z_ne + (1.0 - fr - fc) * z_nw + fr * z_sw
+    z_nw = heightmap[r0,     c0    ].astype(np.float32)
+    z_ne = heightmap[r0,     c0 + 1].astype(np.float32)
+    z_sw = heightmap[r0 + 1, c0    ].astype(np.float32)
+    z_se = heightmap[r0 + 1, c0 + 1].astype(np.float32)
+
+    lower_right = (fr + fc) >= 1.0
+    return np.where(
+        lower_right,
+        (fc + fr - 1.0) * z_se + (1.0 - fr) * z_ne + (1.0 - fc) * z_sw,
+        fc * z_ne + (1.0 - fr - fc) * z_nw + fr * z_sw,
+    )
 
 
 def _points_in_polygon(pts_e: np.ndarray, pts_n: np.ndarray,
@@ -194,6 +203,79 @@ def _scatter_in_polygon(poly_e: np.ndarray, poly_n: np.ndarray,
 
 
 # ---------------------------------------------------------------------------
+# Geometry builder — vectorised via numpy bulk copy
+# ---------------------------------------------------------------------------
+
+def _build_cell_geom(trees: list, offset_e: float, offset_n: float):
+    """Vectorized cross-quad GeomNode built via numpy bulk memory copy."""
+    from panda3d.core import (
+        Geom, GeomNode, GeomTriangles,
+        GeomVertexData, GeomVertexFormat,
+    )
+
+    n = len(trees)
+    if n == 0:
+        return GeomNode("veg_cell")
+
+    fmt   = GeomVertexFormat.getV3c4()
+    vdata = GeomVertexData("veg", fmt, Geom.UHStatic)
+    vdata.unclean_set_num_rows(n * 8)
+
+    # --- Per-tree scalar arrays ---
+    e_a = np.fromiter((t[0] for t in trees), np.float32, n) - np.float32(offset_e)
+    n_a = np.fromiter((t[1] for t in trees), np.float32, n) - np.float32(offset_n)
+    z_a = np.fromiter((t[2] for t in trees), np.float32, n)
+    h_a = np.fromiter((t[3] for t in trees), np.float32, n)
+    top = z_a + h_a
+    hw  = h_a * np.fromiter((t[4].width_ratio for t in trees), np.float32, n) * 0.5
+
+    # Float 0-1 colours → uint8 0-255, shape (n, 4)
+    ct = (np.array([t[4].color_top    for t in trees], np.float32) * 255).astype(np.uint8)
+    cb = (np.array([t[4].color_bottom for t in trees], np.float32) * 255).astype(np.uint8)
+
+    # --- Vertex buffer ---
+    # getV3c4() layout: 3×float32 (12 B) + 4×uint8 (4 B) = 16 B/vertex, no padding
+    dt   = np.dtype([('xyz', np.float32, 3), ('rgba', np.uint8, 4)])
+    vbuf = np.empty(n * 8, dtype=dt)
+
+    # 8 vertex slots per tree using strided assignment
+    vbuf['xyz'][0::8] = np.stack([e_a - hw, n_a,       z_a], 1)
+    vbuf['xyz'][1::8] = np.stack([e_a + hw, n_a,       z_a], 1)
+    vbuf['xyz'][2::8] = np.stack([e_a + hw, n_a,       top], 1)
+    vbuf['xyz'][3::8] = np.stack([e_a - hw, n_a,       top], 1)
+    vbuf['xyz'][4::8] = np.stack([e_a,      n_a - hw,  z_a], 1)
+    vbuf['xyz'][5::8] = np.stack([e_a,      n_a + hw,  z_a], 1)
+    vbuf['xyz'][6::8] = np.stack([e_a,      n_a + hw,  top], 1)
+    vbuf['xyz'][7::8] = np.stack([e_a,      n_a - hw,  top], 1)
+
+    for slot in (0, 1, 4, 5):   # trunk/base colour
+        vbuf['rgba'][slot::8] = cb
+    for slot in (2, 3, 6, 7):   # crown colour
+        vbuf['rgba'][slot::8] = ct
+
+    vdata.modify_array(0).modify_handle().copy_data_from(vbuf.tobytes())
+
+    # --- Index buffer ---
+    # 4 triangles per tree (Q0: 0,1,2 + 0,2,3 ; Q1: 4,5,6 + 4,6,7) = 12 indices
+    # Max vertex index = n*8-1; n ≤ a few hundred per cell → uint16 is safe
+    offsets = np.array([0, 1, 2,  0, 2, 3,  4, 5, 6,  4, 6, 7], dtype=np.uint16)
+    bases   = (np.arange(n, dtype=np.uint16) * np.uint16(8))[:, np.newaxis]
+    idx     = (bases + offsets).reshape(-1)
+
+    tris = GeomTriangles(Geom.UHStatic)
+    idx_arr = tris.modify_vertices()
+    idx_arr.unclean_set_num_rows(int(idx.shape[0]))
+    idx_arr.modify_handle().copy_data_from(idx.tobytes())
+    tris.closePrimitive()
+
+    geom = Geom(vdata)
+    geom.addPrimitive(tris)
+    node = GeomNode("veg_cell")
+    node.addGeom(geom)
+    return node
+
+
+# ---------------------------------------------------------------------------
 # Entity
 # ---------------------------------------------------------------------------
 
@@ -207,7 +289,7 @@ class Vegetation(MapEntity):
         self._radius_m = radius_m
         self._terrain  = terrain
         # (east, north, z, height, VegType)
-        self._trees: list[tuple[float, float, float, float, VegType]] = []
+        self._trees: list[tuple] = []
 
     def build(self) -> None:
         td        = self._terrain.data
@@ -216,64 +298,70 @@ class Vegetation(MapEntity):
         r         = float(self._radius_m)
         rng       = np.random.default_rng(42)
 
-        def z_at(e: float, n: float) -> float:
-            return _sample_z_triangle(e, n, heightmap, grid, r)
-
-        def add_tree(e: float, n: float, h: float, vtype: VegType) -> None:
-            if abs(e) > r or abs(n) > r:
-                return
-            z = z_at(e, n)
-            if z < -0.5:
-                return
-            self._trees.append((e, n, z, h, vtype))
-
-        # --- 1. Individual OSM tree nodes ---
-        tree_vtype  = _VEG_TYPES["tree"]
+        # --- 1. Individual OSM tree nodes (batch to_enu + z-sampling) ---
+        tree_vtype = _VEG_TYPES["tree"]
+        tree_nodes = self._osm.filter_nodes(lambda t: t.get("natural") == "tree")
         n_individual = 0
-        for node in self._osm.filter_nodes(lambda t: t.get("natural") == "tree"):
-            e_arr, n_arr = self._frame.to_enu(
-                np.array([node.lon]), np.array([node.lat]))
-            try:
-                h = float(node.tags.get("height", 0) or 0)
-                if h <= 0:
+        if tree_nodes:
+            lons = np.array([nd.lon for nd in tree_nodes])
+            lats = np.array([nd.lat for nd in tree_nodes])
+            e_arr, n_arr = self._frame.to_enu(lons, lats)
+            z_arr = _sample_z_triangle_vec(e_arr, n_arr, heightmap, grid, r)
+            valid = (np.abs(e_arr) <= r) & (np.abs(n_arr) <= r) & (z_arr >= -0.5)
+            h_list = []
+            for nd in tree_nodes:
+                try:
+                    h = float(nd.tags.get("height", 0) or 0)
+                    if h <= 0:
+                        h = float(rng.uniform(tree_vtype.h_min, tree_vtype.h_max))
+                except (ValueError, TypeError):
                     h = float(rng.uniform(tree_vtype.h_min, tree_vtype.h_max))
-            except (ValueError, TypeError):
-                h = float(rng.uniform(tree_vtype.h_min, tree_vtype.h_max))
-            add_tree(float(e_arr[0]), float(n_arr[0]), h, tree_vtype)
-            n_individual += 1
+                h_list.append(h)
+            h_arr = np.array(h_list, dtype=np.float32)
+            for i in np.where(valid)[0][:tree_vtype.budget]:
+                self._trees.append((float(e_arr[i]), float(n_arr[i]),
+                                    float(z_arr[i]), float(h_arr[i]), tree_vtype))
+                n_individual += 1
 
+        # --- 2 & 3. Vegetation polygon areas ---
         type_used: dict[str, int] = {}
 
         def scatter_polygon(poly_e: np.ndarray, poly_n: np.ndarray,
                             vtype_key: str, vtype: VegType) -> None:
             if len(poly_e) < 3:
                 return
-            if type_used.get(vtype_key, 0) >= vtype.budget:
+            budget_left = vtype.budget - type_used.get(vtype_key, 0)
+            if budget_left <= 0:
                 return
             se, sn = _scatter_in_polygon(
                 poly_e, poly_n, vtype.spacing, vtype.jitter, rng)
-            h_vals = rng.uniform(vtype.h_min, vtype.h_max, len(se))
-            for e, n, h in zip(se, sn, h_vals):
-                if type_used.get(vtype_key, 0) >= vtype.budget:
-                    break
-                add_tree(float(e), float(n), float(h), vtype)
-                type_used[vtype_key] = type_used.get(vtype_key, 0) + 1
+            if len(se) == 0:
+                return
+            z_vals = _sample_z_triangle_vec(se, sn, heightmap, grid, r)
+            h_vals = rng.uniform(vtype.h_min, vtype.h_max, len(se)).astype(np.float32)
+            mask   = (np.abs(se) <= r) & (np.abs(sn) <= r) & (z_vals >= -0.5)
+            se, sn, z_vals, h_vals = (
+                se[mask], sn[mask], z_vals[mask], h_vals[mask])
+            n_add = min(len(se), budget_left)
+            self._trees.extend(
+                (float(se[i]), float(sn[i]), float(z_vals[i]),
+                 float(h_vals[i]), vtype) for i in range(n_add)
+            )
+            type_used[vtype_key] = type_used.get(vtype_key, 0) + n_add
 
-        # --- 2. Vegetation polygon ways ---
         for way in self._osm.filter_ways(lambda t: _classify(t) is not None):
             vtype_key = _classify(way.tags)
             vtype     = _VEG_TYPES[vtype_key]          # type: ignore[index]
             geom      = way.geometry
             if len(geom) < 3:
                 continue
-            lons  = np.fromiter((p[0] for p in geom), np.float64, count=len(geom))
-            lats  = np.fromiter((p[1] for p in geom), np.float64, count=len(geom))
+            lons  = np.fromiter((p[0] for p in geom), np.float64, len(geom))
+            lats  = np.fromiter((p[1] for p in geom), np.float64, len(geom))
             east, north = self._frame.to_enu(lons, lats)
             if east.max() < -r or east.min() > r or north.max() < -r or north.min() > r:
                 continue
             scatter_polygon(east, north, vtype_key, vtype)
 
-        # --- 3. Vegetation polygon relations ---
         for rel in self._osm.filter_relations(lambda t: _classify(t) is not None):
             vtype_key = _classify(rel.tags)
             vtype     = _VEG_TYPES[vtype_key]          # type: ignore[index]
@@ -282,8 +370,8 @@ class Vegetation(MapEntity):
                     continue
                 if len(ring) < 3:
                     continue
-                lons  = np.fromiter((p[0] for p in ring), np.float64, count=len(ring))
-                lats  = np.fromiter((p[1] for p in ring), np.float64, count=len(ring))
+                lons  = np.fromiter((p[0] for p in ring), np.float64, len(ring))
+                lats  = np.fromiter((p[1] for p in ring), np.float64, len(ring))
                 east, north = self._frame.to_enu(lons, lats)
                 if east.max() < -r or east.min() > r or north.max() < -r or north.min() > r:
                     continue
@@ -297,56 +385,39 @@ class Vegetation(MapEntity):
         if not self._trees:
             return
 
-        from panda3d.core import (
-            Geom, GeomNode, GeomTriangles,
-            GeomVertexData, GeomVertexFormat, GeomVertexWriter,
-        )
-
-        n_trees = len(self._trees)
-        fmt   = GeomVertexFormat.getV3c4()
-        vdata = GeomVertexData("vegetation", fmt, Geom.UHStatic)
-        vdata.setNumRows(n_trees * 8)
-
-        vw = GeomVertexWriter(vdata, "vertex")
-        cw = GeomVertexWriter(vdata, "color")
-        tris = GeomTriangles(Geom.UHStatic)
-
-        for idx, (e, n, z, h, vtype) in enumerate(self._trees):
-            ct  = vtype.color_top
-            cb  = vtype.color_bottom
-            hw  = h * vtype.width_ratio * 0.5
-            top = z + h
-            b   = idx * 8
-
-            # Quad 1: N-S plane (extends along east axis)
-            vw.addData3(e - hw, n, z);   cw.addData4(*cb)
-            vw.addData3(e + hw, n, z);   cw.addData4(*cb)
-            vw.addData3(e + hw, n, top); cw.addData4(*ct)
-            vw.addData3(e - hw, n, top); cw.addData4(*ct)
-
-            # Quad 2: E-W plane (extends along north axis)
-            vw.addData3(e, n - hw, z);   cw.addData4(*cb)
-            vw.addData3(e, n + hw, z);   cw.addData4(*cb)
-            vw.addData3(e, n + hw, top); cw.addData4(*ct)
-            vw.addData3(e, n - hw, top); cw.addData4(*ct)
-
-            for q in range(2):
-                v = b + q * 4
-                tris.addVertices(v,     v + 1, v + 2)
-                tris.addVertices(v,     v + 2, v + 3)
-
-        tris.closePrimitive()
-
-        geom = Geom(vdata)
-        geom.addPrimitive(tris)
-        node = GeomNode("vegetation")
-        node.addGeom(geom)
-
-        np_ = parent.attachNewNode(node)
-        np_.setTwoSided(True)
-        np_.setLightOff()
-
+        from panda3d.core import LODNode
         from osm3denv.render.helpers import load_shader
+
+        # One root node — shader and render state cascade to all LOD cells.
+        veg_root = parent.attachNewNode("vegetation")
+        veg_root.setTwoSided(True)
+        veg_root.setLightOff()
         shader = load_shader("vegetation")
         if shader:
-            np_.setShader(shader)
+            veg_root.setShader(shader)
+
+        # Group trees into spatial grid cells.
+        cells: dict[tuple[int, int], list] = {}
+        for tree in self._trees:
+            e, n = tree[0], tree[1]
+            key = (int(e // _LOD_CELL_SIZE), int(n // _LOD_CELL_SIZE))
+            cells.setdefault(key, []).append(tree)
+
+        # One LODNode per cell with two detail levels.
+        for (ci, cj), trees in cells.items():
+            cx = (ci + 0.5) * _LOD_CELL_SIZE
+            cn = (cj + 0.5) * _LOD_CELL_SIZE
+
+            lod_np = veg_root.attachNewNode(LODNode(f"veg_{ci}_{cj}"))
+            lod_np.setPos(cx, cn, 0.0)
+
+            # High detail: all trees — visible within _LOD_NEAR.
+            lod_np.attachNewNode(_build_cell_geom(trees, cx, cn))
+            lod_np.node().addSwitch(_LOD_NEAR, 0.0)
+
+            # Low detail: every Nth tree — visible _LOD_NEAR … _LOD_FAR.
+            lod_np.attachNewNode(_build_cell_geom(trees[::_LOD_LOW_STEP], cx, cn))
+            lod_np.node().addSwitch(_LOD_FAR, _LOD_NEAR)
+            # Beyond _LOD_FAR no child matches → cell is invisible.
+
+        log.info("vegetation: %d trees in %d LOD cells", len(self._trees), len(cells))
