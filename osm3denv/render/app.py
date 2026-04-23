@@ -35,7 +35,7 @@ class TerrainViewer(ShowBase):
 
     def __init__(self, terrain: Terrain,
                  entities: list[MapEntity] | None = None,
-                 frame=None) -> None:
+                 frame=None, minimap=None) -> None:
         ShowBase.__init__(self)
         self._frame = frame
         self._origin_alt_m = float(terrain.data.origin_alt_m)
@@ -103,6 +103,9 @@ class TerrainViewer(ShowBase):
             fg=(1, 1, 1, 0.9), bg=(0, 0, 0, 0.4),
             align=TextNode.ALeft, mayChange=True,
         )
+
+        if minimap is not None:
+            minimap.attach_to(self)
 
         self.taskMgr.add(self._update, "camera_update")
 
@@ -173,5 +176,5 @@ class TerrainViewer(ShowBase):
 
 def run_viewer(terrain: Terrain,
                entities: list[MapEntity] | None = None,
-               frame=None) -> None:
-    TerrainViewer(terrain, entities=entities, frame=frame).run()
+               frame=None, minimap=None) -> None:
+    TerrainViewer(terrain, entities=entities, frame=frame, minimap=minimap).run()

@@ -84,6 +84,11 @@ def run(cfg: Config, frame, *,
     tex_paths      = tex_fetch.fetch(cfg.tex_cache)
     bld_tex_paths  = tex_fetch.fetch_building(cfg.tex_cache)
 
+    from osm3denv.render.minimap import Minimap
+    minimap = Minimap(cfg.lat, cfg.lon, cfg.radius_m,
+                      cache_dir=cfg.cache_dir / "minimap")
+    minimap.fetch()
+
     # Phase 1 — sea polygon (Terrain needs it to clamp underwater vertices).
     sea = Sea(osm_data, frame, cfg.radius_m)
     sea.build()
@@ -137,7 +142,7 @@ def run(cfg: Config, frame, *,
         return
 
     from osm3denv.render.app import run_viewer
-    run_viewer(terrain, entities=entities, frame=frame)
+    run_viewer(terrain, entities=entities, frame=frame, minimap=minimap)
 
 
 if __name__ == "__main__":
