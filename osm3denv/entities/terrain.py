@@ -111,6 +111,7 @@ class Terrain(MapEntity):
         return self._data
 
     def attach_to(self, parent) -> None:
+        from panda3d.core import Texture
         from osm3denv.render.helpers import attach_mesh, load_shader
         td = self.data
         np_ = attach_mesh(parent, "terrain", td.vertices, td.normals, td.uvs, td.indices)
@@ -118,3 +119,9 @@ class Terrain(MapEntity):
         if shader:
             np_.setShader(shader)
             np_.setShaderInput("u_origin_alt_m", float(td.origin_alt_m))
+            np_.setShaderInput("u_radius_m",     float(td.radius_m))
+            # Blank 1×1 splatmap — Roads.attach_to() overrides this if roads exist.
+            blank = Texture("road_splatmap")
+            blank.setup2dTexture(1, 1, Texture.T_unsigned_byte, Texture.F_luminance)
+            blank.setRamImage(bytes([0]))
+            np_.setShaderInput("u_road_splatmap", blank)

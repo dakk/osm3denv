@@ -8,7 +8,9 @@
 //   • Dave Hoskins hash — shadertoy.com/view/4djSRW  (MIT-like)
 //   • Inigo Quilez — iquilezles.org/articles/fbm
 
-uniform float u_origin_alt_m;  // absolute SRTM altitude of the scene origin
+uniform float     u_origin_alt_m;  // absolute SRTM altitude of the scene origin
+uniform float     u_radius_m;      // half-extent of the scene in metres
+uniform sampler2D u_road_splatmap; // dirt-road mask: 0=terrain, 1=road
 
 in vec3 vWorldPos;
 in vec3 vWorldNormal;
@@ -125,6 +127,15 @@ void main() {
 
     // Subtle micro-texture brightening — breaks up large uniform patches.
     color *= 0.92 + 0.16 * micro;
+
+    // -----------------------------------------------------------------------
+    // Road splatmap — blend dirt colour where tracks/paths were rasterised.
+    // UV: (0,0) = SW corner, (1,1) = NE corner, matching ENU → pixel mapping.
+    // -----------------------------------------------------------------------
+    vec2  road_uv = (vWorldPos.xy + u_radius_m) / (2.0 * u_radius_m);
+    float road_w  = texture(u_road_splatmap, road_uv).r;
+    vec3  dirt    = vec3(0.50, 0.38, 0.22) * (0.90 + 0.20 * micro);
+    color = mix(color, dirt, road_w * 0.88);
 
     // -----------------------------------------------------------------------
     // Lighting: Lambertian diffuse + ambient.
