@@ -132,7 +132,7 @@ def run(cfg: Config, frame, *,
         entities.append(powerlines)
 
     if not no_vegetation:
-        vegetation = Vegetation(osm_data, frame, cfg.radius_m, terrain)
+        vegetation = Vegetation(osm_data, frame, cfg.radius_m, terrain, cache_dir=cfg.cache_dir)
         vegetation.build()
         entities.append(vegetation)
 

@@ -3,3 +3,4 @@ build
 venv
 *.pyc
 __pycache__
+downloaded_3dassets
