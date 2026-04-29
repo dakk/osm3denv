@@ -59,6 +59,7 @@ _VEG_TYPES: dict[str, VegType] = {
     "allotments":    VegType(h_min=2.0,  h_max=4.0,  spacing=6.0,  jitter=0.30),
     "tree":          VegType(h_min=6.0,  h_max=12.0, spacing=0.0,  jitter=0.0),
     "forest":        VegType(h_min=10.0, h_max=18.0, spacing=12.0, jitter=0.40),
+    "residential":   VegType(h_min=4.0,  h_max=12.0, spacing=15.0, jitter=0.50),
 }
 
 
@@ -80,6 +81,7 @@ def _classify(tags: dict) -> str | None:
     if leisure == "garden":                              return "garden"
     if landuse == "village_green":                       return "village_green"
     if landuse == "allotments":                          return "allotments"
+    if landuse == "residential":                         return "residential"
     return None
 
 
@@ -155,6 +157,22 @@ def _scatter_in_cell(poly_e, poly_n,
 
     mask = _points_in_polygon(ge, gn, poly_e, poly_n)
     return ge[mask], gn[mask]
+
+
+def _scatter_full_cell(cell_e_min, cell_e_max, cell_n_min, cell_n_max,
+                       spacing, jitter_frac, rng):
+    """Scatter grid points across the entire cell bbox without polygon masking."""
+    es = np.arange(cell_e_min + spacing * 0.5, cell_e_max, spacing)
+    ns = np.arange(cell_n_min + spacing * 0.5, cell_n_max, spacing)
+    if len(es) == 0 or len(ns) == 0:
+        return np.empty(0), np.empty(0)
+    ge, gn = np.meshgrid(es, ns)
+    ge = ge.ravel().copy()
+    gn = gn.ravel().copy()
+    jitter = spacing * jitter_frac
+    ge += rng.uniform(-jitter, jitter, len(ge))
+    gn += rng.uniform(-jitter, jitter, len(gn))
+    return ge, gn
 
 
 # ---------------------------------------------------------------------------
@@ -385,8 +403,7 @@ class Vegetation(MapEntity):
                 cx = (ci + 0.5) * _CELL_SIZE
                 cn = (cj + 0.5) * _CELL_SIZE
                 if math.sqrt((cx - cam_e) ** 2 + (cn - cam_n) ** 2) <= _STREAM_RADIUS:
-                    if (ci, cj) in self._cell_polygons or (ci, cj) in self._fixed_by_cell:
-                        needed.add((ci, cj))
+                    needed.add((ci, cj))
 
         active = set(self._active_cells.keys())
 
@@ -445,16 +462,13 @@ class Vegetation(MapEntity):
         for (e, n, z, h) in self._fixed_by_cell.get((ci, cj), []):
             trees.append((e, n, z, h, "tree"))
 
-        # Ground-cover pass — dense grass_claster + scattered daisies under all veg polygons
+        # Ground-cover pass — grass_claster + daisies across the entire cell
         groundcover: list[tuple] = []
-        for (poly_e, poly_n, _) in self._cell_polygons.get((ci, cj), []):
-            se, sn = _scatter_in_cell(
-                poly_e, poly_n,
-                cell_e_min, cell_e_max, cell_n_min, cell_n_max,
-                _GROUNDCOVER_SPACING, 0.5, rng,
-            )
-            if len(se) == 0:
-                continue
+        se, sn = _scatter_full_cell(
+            cell_e_min, cell_e_max, cell_n_min, cell_n_max,
+            _GROUNDCOVER_SPACING, 0.5, rng,
+        )
+        if len(se) > 0:
             z_vals = _sample_z_triangle_vec(
                 se, sn, self._heightmap, self._grid, self._radius_m)
             for i in np.where(z_vals >= -0.5)[0]:

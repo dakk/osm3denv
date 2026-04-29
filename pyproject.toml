@@ -29,5 +29,6 @@ dev = ["pytest>=8"]
 osm3denv = "osm3denv.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["osm3denv*"]
+where = [".", "proceduralbuilding"]
+include = ["osm3denv*", "procbuilding*"]
 exclude = ["old*", "tests*", "venv*"]

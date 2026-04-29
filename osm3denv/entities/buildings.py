@@ -1,17 +1,21 @@
-"""Buildings entity — procedural residential houses from OSM building footprints.
+"""Buildings entity — procedural buildings from OSM footprint polygons.
 
-Three LOD levels per building:
-  0–80 m   full detail  (walls, roof, windows, door, balcony, chimney, AC)
-  80–300 m medium       (walls + roof only)
-  300–700 m simple      (single textured box)
-  > 700 m  invisible
+Uses the `procbuilding` library (proceduralbuilding/procbuilding) to generate
+geometry from the actual OSM polygon shape.
 
-Shared textures are pre-loaded once in HouseBuilder so RAM scales with
-material types, not building count.
+Two LOD levels per building:
+  0 – 80 m    full detail  (walls, windows, door, roof)
+  80 – 400 m  reduced      (walls + roof, fewer windows)
+  > 400 m     invisible
 """
 from __future__ import annotations
 
+import builtins
 import logging
+import math
+import sys
+from pathlib import Path
+from random import Random
 
 import numpy as np
 
@@ -21,26 +25,55 @@ from osm3denv.frame import Frame
 
 log = logging.getLogger(__name__)
 
-_MAX_DIM = 80.0   # skip buildings larger than this (airports, stadiums)
+# Make procbuilding importable from the bundled proceduralbuilding/ subdirectory.
+_PB_DIR = Path(__file__).parent.parent.parent / "proceduralbuilding"
+if _PB_DIR.is_dir() and str(_PB_DIR) not in sys.path:
+    sys.path.insert(0, str(_PB_DIR))
+
+_MAX_DIM = 80.0
 _MIN_DIM =  3.5
 _BUDGET  = 5000
 
 _LOD_FULL   =  80.0
-_LOD_MEDIUM = 300.0
-_LOD_SIMPLE = 700.0
+_LOD_MEDIUM = 400.0
+
+# Window point-light pool
+_BLDG_LIGHT_POOL  = 8
+_BLDG_LIGHT_COLOR = (1.0, 0.72, 0.28, 1.0)   # warm incandescent
+_BLDG_LIGHT_ATTEN = (1.0, 0.0, 0.025)         # (constant, linear, quadratic)
+
+# Randomised per-building appearance palettes
+_WALL_COLORS = [
+    (0.92, 0.87, 0.78, 1.0),  # cream
+    (0.88, 0.85, 0.80, 1.0),  # warm white
+    (0.88, 0.82, 0.68, 1.0),  # light yellow
+    (0.90, 0.80, 0.72, 1.0),  # pale peach
+    (0.75, 0.75, 0.73, 1.0),  # light grey
+    (0.85, 0.82, 0.78, 1.0),  # off-white
+    (0.72, 0.38, 0.26, 1.0),  # brick red
+    (0.65, 0.63, 0.60, 1.0),  # concrete
+]
+
+_ROOF_COLORS = [
+    (0.55, 0.22, 0.12, 1.0),  # red clay
+    (0.32, 0.32, 0.35, 1.0),  # dark grey
+    (0.60, 0.28, 0.18, 1.0),  # terracotta
+    (0.40, 0.22, 0.12, 1.0),  # dark brown
+    (0.38, 0.36, 0.40, 1.0),  # slate
+]
 
 
 class Buildings(MapEntity):
-    """Renders OSM residential buildings as procedural 3-D houses with LOD."""
+    """Renders every OSM building=* footprint as a procedural 3-D structure."""
 
     def __init__(self, osm: OSMData, frame: Frame, radius_m: float,
-                 terrain, tex_paths: dict | None = None) -> None:
-        self._osm       = osm
-        self._frame     = frame
-        self._radius_m  = radius_m
-        self._terrain   = terrain
-        self._tex_paths = tex_paths or {}
-        self._entries: list[tuple] = []  # (east, north, width, depth, floors, bldg_id)
+                 terrain) -> None:
+        self._osm      = osm
+        self._frame    = frame
+        self._radius_m = radius_m
+        self._terrain  = terrain
+        # (centroid_e, centroid_n, local_verts, floors, bldg_id)
+        self._entries: list[tuple] = []
 
     def build(self) -> None:
         seen: set[int] = set()
@@ -99,35 +132,129 @@ class Buildings(MapEntity):
             except ValueError:
                 pass
 
-        return (float(east.mean()), float(north.mean()), width, depth, floors, bldg_id)
+        ce = float(east.mean())
+        cn = float(north.mean())
+
+        # Build local-frame vertex list, dropping OSM closing duplicate
+        raw = list(zip(east.tolist(), north.tolist()))
+        if len(raw) > 1 and raw[0] == raw[-1]:
+            raw = raw[:-1]
+        if len(raw) < 3:
+            return None
+
+        local_verts = [(float(e - ce), float(n - cn)) for e, n in raw]
+        return (ce, cn, local_verts, floors, bldg_id)
 
     def attach_to(self, parent) -> None:
+        td = self._terrain.data
+
+        # ---- Window point-light pool — always set up regardless of procbuilding --
+        self._bldg_light_positions: list[tuple] = []
+        for ce, cn, _, floors, _ in self._entries:
+            z = self._sample_z(ce, cn, td)
+            win_z = float(z) + min(floors, 2) * 3.0 + 1.5
+            self._bldg_light_positions.append((float(ce), float(cn), win_z))
+
+        self._bldg_pos_arr = (
+            np.array([(e, n) for e, n, _ in self._bldg_light_positions],
+                     dtype=np.float32)
+            if self._bldg_light_positions else None
+        )
+
+        from panda3d.core import LColor, LVector3, PointLight
+        self._bldg_pts: list = []
+        for i in range(_BLDG_LIGHT_POOL):
+            pl = PointLight(f"bwin_{i}")
+            pl.setColor(LColor(*_BLDG_LIGHT_COLOR))
+            pl.setAttenuation(LVector3(*_BLDG_LIGHT_ATTEN))
+            np_ = parent.attachNewNode(pl)
+            np_.setPos(0.0, 0.0, -99999.0)
+            parent.setLight(np_)
+            self._bldg_pts.append(np_)
+
+        builtins.base.taskMgr.add(self._bldg_light_task, "bldg_lights")
+
+        # ---- Building geometry (optional — lights work without procbuilding) ----
+        try:
+            from procbuilding import PolygonHouse, PolygonHouseParams  # type: ignore[import]
+        except ImportError as exc:
+            log.warning("procbuilding not available — buildings disabled: %s", exc)
+            return
+
         from panda3d.core import LODNode
-        from osm3denv.render.helpers import load_shader
-        from osm3denv.render.procedural.house import HouseBuilder
 
-        shader  = load_shader("building")
-        builder = HouseBuilder(self._tex_paths, shader=shader)
-        td      = self._terrain.data
+        for ce, cn, local_verts, floors, bldg_id in self._entries:
+            if len(local_verts) < 3:
+                continue
+            z = self._sample_z(ce, cn, td)
+            rng = Random(bldg_id)
 
-        for cx, cy, width, depth, floors, bldg_id in self._entries:
-            z = self._sample_z(cx, cy, td)
+            wall_color = rng.choice(_WALL_COLORS)
+            roof_color = rng.choice(_ROOF_COLORS)
 
             lod_np = parent.attachNewNode(LODNode(f"bld_{bldg_id}"))
-            lod_np.setPos(float(cx), float(cy), float(z))
-            lod    = lod_np.node()
+            lod_np.setPos(float(ce), float(cn), float(z))
+            lod = lod_np.node()
 
-            full   = lod_np.attachNewNode("full")
-            builder.build_full(bldg_id, width, depth, floors, full)
-            lod.addSwitch(_LOD_FULL, 0.0)
+            try:
+                full = lod_np.attachNewNode("full")
+                PolygonHouse(PolygonHouseParams(
+                    verts=local_verts,
+                    num_floors=floors,
+                    wall_color=wall_color,
+                    roof_color=roof_color,
+                    windows_per_wall=8,
+                )).build(full)
+                lod.addSwitch(_LOD_FULL, 0.0)
 
-            medium = lod_np.attachNewNode("medium")
-            builder.build_medium(bldg_id, width, depth, floors, medium)
-            lod.addSwitch(_LOD_MEDIUM, _LOD_FULL)
+                medium = lod_np.attachNewNode("medium")
+                PolygonHouse(PolygonHouseParams(
+                    verts=local_verts,
+                    num_floors=floors,
+                    wall_color=wall_color,
+                    roof_color=roof_color,
+                    windows_per_wall=2,
+                )).build(medium)
+                lod.addSwitch(_LOD_MEDIUM, _LOD_FULL)
 
-            simple = lod_np.attachNewNode("simple")
-            builder.build_simple(bldg_id, width, depth, floors, simple)
-            lod.addSwitch(_LOD_SIMPLE, _LOD_MEDIUM)
+            except Exception as exc:
+                log.warning("bld %d failed: %s", bldg_id, exc)
+                lod_np.removeNode()
+
+    def _bldg_light_task(self, task):
+        if not self._bldg_pts or self._bldg_pos_arr is None:
+            return task.cont
+
+        tod    = getattr(builtins.base, 'time_of_day', 0.5)
+        sin_el = -math.cos(2.0 * math.pi * tod)
+        intensity = float(np.clip((-sin_el + 0.05) / 0.15, 0.0, 1.0))
+
+        from panda3d.core import LColor
+        col = LColor(_BLDG_LIGHT_COLOR[0] * intensity,
+                     _BLDG_LIGHT_COLOR[1] * intensity,
+                     _BLDG_LIGHT_COLOR[2] * intensity, 1.0)
+        for pl_np in self._bldg_pts:
+            pl_np.node().setColor(col)
+
+        if intensity < 0.01:
+            for pl_np in self._bldg_pts:
+                pl_np.setPos(0.0, 0.0, -99999.0)
+            return task.cont
+
+        cam    = builtins.base.camera.getPos()
+        ce, cn = float(cam.x), float(cam.y)
+
+        diffs = self._bldg_pos_arr - np.array([ce, cn], dtype=np.float32)
+        dists = (diffs * diffs).sum(axis=1)
+        n_all = len(self._bldg_pos_arr)
+        k     = min(_BLDG_LIGHT_POOL, n_all)
+        idx   = np.argpartition(dists, k - 1)[:k] if k < n_all else np.arange(n_all)
+
+        for i, j in enumerate(idx):
+            e, n, z = self._bldg_light_positions[int(j)]
+            self._bldg_pts[i].setPos(float(e), float(n), float(z))
+
+        return task.cont
 
     def _sample_z(self, east: float, north: float, td) -> float:
         g     = td.heightmap.shape[0]
