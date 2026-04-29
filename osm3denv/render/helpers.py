@@ -2,11 +2,33 @@
 from __future__ import annotations
 
 import logging
+import math
 from pathlib import Path
 
 import numpy as np
 
 log = logging.getLogger(__name__)
+
+
+def tod_intensity(time_of_day: float) -> float:
+    """Night-time light intensity in [0,1]: 1.0 at midnight, 0.0 around noon."""
+    sin_el = -math.cos(2.0 * math.pi * time_of_day)
+    return float(np.clip((-sin_el + 0.05) / 0.15, 0.0, 1.0))
+
+
+def nearest_k_idx(pos2d: np.ndarray, cam_e: float, cam_n: float, k: int) -> np.ndarray:
+    """Indices of the *k* rows in *pos2d* closest to (cam_e, cam_n).
+
+    When len(pos2d) <= k every index is returned.  Callers that hit this path
+    every frame should cache ``np.arange(len(pos2d))`` and pass it directly
+    rather than calling this function.
+    """
+    n_all = len(pos2d)
+    k     = min(k, n_all)
+    diffs = pos2d - np.array([cam_e, cam_n], dtype=np.float32)
+    dists = (diffs * diffs).sum(axis=1)
+    return np.argpartition(dists, k - 1)[:k] if k < n_all else np.arange(n_all)
+
 
 _SHADER_DIR = Path(__file__).parent / "shaders"
 _shader_cache: dict = {}

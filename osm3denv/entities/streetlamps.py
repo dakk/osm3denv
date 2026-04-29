@@ -17,6 +17,7 @@ from osm3denv.entity import MapEntity
 from osm3denv.entities.utils import sample_z
 from osm3denv.fetch.osm import OSMData
 from osm3denv.frame import Frame
+from osm3denv.render.helpers import nearest_k_idx, tod_intensity
 
 log = logging.getLogger(__name__)
 
@@ -135,6 +136,9 @@ class StreetLamps(MapEntity):
             np.array([(e, n, z) for e, n, z, _ in self._positions], dtype=np.float32)
             if self._positions else None
         )
+        self._all_idx = (
+            np.arange(len(self._positions)) if len(self._positions) <= _SPOT_POOL else None
+        )
         self._spot_nps: list = []
         self._setup_spotlights()
         builtins.base.taskMgr.add(self._light_task, "lamp_lights")
@@ -158,6 +162,10 @@ class StreetLamps(MapEntity):
         log.info("streetlamps: model h=%.2fm base_z=%.2fm → scale=%.3f",
                  nat_h, base_z, scale)
 
+        # Apply common transforms once so all instances share them.
+        src.setPos(0.0, 0.0, -base_z * scale)
+        src.setScale(scale)
+
         from panda3d.core import LODNode
         root = parent.attachNewNode("streetlamps")
 
@@ -167,10 +175,8 @@ class StreetLamps(MapEntity):
             lod    = lod_np.node()
 
             detail = lod_np.attachNewNode("detail")
-            inst   = src.copyTo(detail)
-            inst.setPos(0.0, 0.0, -base_z * scale)
-            inst.setScale(scale)
-            inst.setH(float(heading))
+            detail.setH(float(heading))
+            src.instanceTo(detail)   # geometry shared; one copy in RAM
             lod.addSwitch(_LOD_DIST, 0.0)
 
         log.info("streetlamps: %d instances attached", len(self._positions))
@@ -210,11 +216,10 @@ class StreetLamps(MapEntity):
         if not self._spot_nps or self._pos_arr is None:
             return task.cont
 
-        tod    = getattr(builtins.base, 'time_of_day', 0.5)
-        sin_el = -math.cos(2.0 * math.pi * tod)
-        intensity = float(np.clip((-sin_el + 0.05) / 0.15, 0.0, 1.0))
+        from panda3d.core import LColor, LVecBase3f
 
-        from panda3d.core import LColor
+        intensity = tod_intensity(getattr(builtins.base, 'time_of_day', 0.5))
+
         col = LColor(_SPOT_COLOR[0] * intensity, _SPOT_COLOR[1] * intensity,
                      _SPOT_COLOR[2] * intensity, 1.0)
         for sp in self._spot_nps:
@@ -223,42 +228,26 @@ class StreetLamps(MapEntity):
         if intensity < 0.01:
             for sp in self._spot_nps:
                 sp.setPos(0.0, 0.0, -99999.0)
-            if hasattr(self, "_pta_spot_pos"):
-                from panda3d.core import LVecBase3f
-                for i in range(_SPOT_POOL):
-                    self._pta_spot_pos[i] = LVecBase3f(0.0, 0.0, -99999.0)
-                    self._pta_spot_col[i] = LVecBase3f(0.0, 0.0, 0.0)
+            for i in range(_SPOT_POOL):
+                self._pta_spot_pos[i] = LVecBase3f(0.0, 0.0, -99999.0)
+                self._pta_spot_col[i] = LVecBase3f(0.0, 0.0, 0.0)
             return task.cont
 
         cam    = builtins.base.camera.getPos()
-        ce, cn = float(cam.x), float(cam.y)
+        idx    = (self._all_idx if self._all_idx is not None
+                  else nearest_k_idx(self._pos_arr[:, :2], float(cam.x), float(cam.y), _SPOT_POOL))
 
-        diffs = self._pos_arr[:, :2] - np.array([ce, cn], dtype=np.float32)
-        dists = (diffs * diffs).sum(axis=1)
-        n_all = len(self._pos_arr)
-        k     = min(_SPOT_POOL, n_all)
-        idx   = np.argpartition(dists, k - 1)[:k] if k < n_all else np.arange(n_all)
-
-        if hasattr(self, "_pta_spot_pos"):
-            from panda3d.core import LVecBase3f
-            sc = (
-                _SPOT_COLOR[0] * intensity,
-                _SPOT_COLOR[1] * intensity,
-                _SPOT_COLOR[2] * intensity,
-            )
-            for i, j in enumerate(idx):
-                e, n, z, _ = self._positions[int(j)]
-                lz = float(z) + _LAMP_TARGET_H * 0.88
-                self._pta_spot_pos[i] = LVecBase3f(float(e), float(n), lz)
-                self._pta_spot_col[i] = LVecBase3f(*sc)
-            # park unused slots
-            for i in range(len(idx), _SPOT_POOL):
-                self._pta_spot_pos[i] = LVecBase3f(0.0, 0.0, -99999.0)
-                self._pta_spot_col[i] = LVecBase3f(0.0, 0.0, 0.0)
-
+        sc = (_SPOT_COLOR[0] * intensity, _SPOT_COLOR[1] * intensity,
+              _SPOT_COLOR[2] * intensity)
         for i, j in enumerate(idx):
             e, n, z, _ = self._positions[int(j)]
-            self._spot_nps[i].setPos(float(e), float(n), float(z) + _LAMP_TARGET_H * 0.88)
+            lz = float(z) + _LAMP_TARGET_H * 0.88
+            self._spot_nps[i].setPos(float(e), float(n), lz)
             self._spot_nps[i].setHpr(0.0, -90.0, 0.0)
+            self._pta_spot_pos[i] = LVecBase3f(float(e), float(n), lz)
+            self._pta_spot_col[i] = LVecBase3f(*sc)
+        for i in range(len(idx), _SPOT_POOL):
+            self._pta_spot_pos[i] = LVecBase3f(0.0, 0.0, -99999.0)
+            self._pta_spot_col[i] = LVecBase3f(0.0, 0.0, 0.0)
 
         return task.cont

@@ -62,39 +62,50 @@ class OSMData:
         return [n for n in self.nodes if predicate(n.tags)]
 
 
+# One template string per Overpass filter clause.  Use ``{bb}`` as the
+# bbox placeholder.  Add a new entry here when introducing a new entity type.
+_OVERPASS_FILTERS: list[str] = [
+    # terrain / coastline
+    'way["natural"="coastline"]({bb})',
+    # buildings
+    'way["building"]({bb})',
+    # roads
+    'way["highway"]({bb})',
+    # water
+    'way["natural"="water"]({bb})',
+    'way["waterway"~"river|stream|canal|ditch|drain"]({bb})',
+    'way["waterway"="riverbank"]({bb})',
+    'way["landuse"="reservoir"]({bb})',
+    'relation["natural"="water"]({bb})',
+    'relation["waterway"="riverbank"]({bb})',
+    # beach
+    'way["natural"="beach"]({bb})',
+    'relation["natural"="beach"]({bb})',
+    # power lines
+    'way["power"~"line|minor_line"]({bb})',
+    'node["power"~"tower|pole"]({bb})',
+    # vegetation
+    'node["natural"="tree"]({bb})',
+    'way["landuse"~"forest|orchard|cemetery|village_green|allotments"]({bb})',
+    'way["natural"~"wood|scrub|heath"]({bb})',
+    'way["leisure"~"park|garden"]({bb})',
+    'way["amenity"="grave_yard"]({bb})',
+    'relation["landuse"~"forest|orchard|cemetery|village_green|allotments"]({bb})',
+    'relation["natural"~"wood|scrub|heath"]({bb})',
+    'relation["leisure"~"park|garden"]({bb})',
+    'relation["amenity"="grave_yard"]({bb})',
+    # fences
+    'way["landuse"="residential"]({bb})',
+    'relation["landuse"="residential"]({bb})',
+    'way["barrier"~"fence|wall|retaining_wall"]({bb})',
+]
+
+
 def _build_query(bbox_ll: tuple[float, float, float, float]) -> str:
     min_lon, min_lat, max_lon, max_lat = bbox_ll
     bb = f"{min_lat},{min_lon},{max_lat},{max_lon}"
-    return f"""[out:json][timeout:90];
-(
-  way["building"]({bb});
-  way["highway"]({bb});
-  way["natural"="water"]({bb});
-  way["natural"="coastline"]({bb});
-  way["natural"="beach"]({bb});
-  relation["natural"="beach"]({bb});
-  way["waterway"~"river|stream|canal|ditch|drain"]({bb});
-  way["waterway"="riverbank"]({bb});
-  way["landuse"="reservoir"]({bb});
-  relation["natural"="water"]({bb});
-  relation["waterway"="riverbank"]({bb});
-  way["power"~"line|minor_line"]({bb});
-  node["power"~"tower|pole"]({bb});
-  node["natural"="tree"]({bb});
-  way["landuse"~"forest|orchard|cemetery|village_green|allotments"]({bb});
-  way["natural"~"wood|scrub|heath"]({bb});
-  way["leisure"~"park|garden"]({bb});
-  way["amenity"="grave_yard"]({bb});
-  relation["landuse"~"forest|orchard|cemetery|village_green|allotments"]({bb});
-  relation["natural"~"wood|scrub|heath"]({bb});
-  relation["leisure"~"park|garden"]({bb});
-  relation["amenity"="grave_yard"]({bb});
-  way["landuse"="residential"]({bb});
-  relation["landuse"="residential"]({bb});
-  way["barrier"~"fence|wall|retaining_wall"]({bb});
-);
-out geom;
-"""
+    clauses = "\n".join(f"  {f.format(bb=bb)};" for f in _OVERPASS_FILTERS)
+    return f"[out:json][timeout:90];\n(\n{clauses}\n);\nout geom;\n"
 
 
 def _fetch_overpass(query: str) -> dict:

@@ -12,16 +12,18 @@ from __future__ import annotations
 
 import builtins
 import logging
-import math
 import sys
+from collections import deque
 from pathlib import Path
 from random import Random
 
 import numpy as np
 
+from osm3denv.entities.utils import sample_z
 from osm3denv.entity import MapEntity
 from osm3denv.fetch.osm import OSMData
 from osm3denv.frame import Frame
+from osm3denv.render.helpers import nearest_k_idx, tod_intensity
 
 log = logging.getLogger(__name__)
 
@@ -93,14 +95,16 @@ class Buildings(MapEntity):
                 break
             if rel.id in seen:
                 continue
+            added = False
             for role, ring in rel.rings:
                 if role not in ("outer", "") or len(ring) < 4:
                     continue
                 entry = self._process_geometry(ring, rel.tags, rel.id)
                 if entry:
                     self._entries.append(entry)
-                    seen.add(rel.id)
-                    break
+                    added = True
+            if added:
+                seen.add(rel.id)
 
         log.info("buildings: %d structures queued", len(self._entries))
 
@@ -151,7 +155,7 @@ class Buildings(MapEntity):
         # ---- Window point-light pool — always set up regardless of procbuilding --
         self._bldg_light_positions: list[tuple] = []
         for ce, cn, _, floors, _ in self._entries:
-            z = self._sample_z(ce, cn, td)
+            z = sample_z(ce, cn, td.heightmap, td.heightmap.shape[0], td.radius_m)
             win_z = float(z) + min(floors, 2) * 3.0 + 1.5
             self._bldg_light_positions.append((float(ce), float(cn), win_z))
 
@@ -159,6 +163,10 @@ class Buildings(MapEntity):
             np.array([(e, n) for e, n, _ in self._bldg_light_positions],
                      dtype=np.float32)
             if self._bldg_light_positions else None
+        )
+        self._bldg_all_idx = (
+            np.arange(len(self._bldg_light_positions))
+            if len(self._bldg_light_positions) <= _BLDG_LIGHT_POOL else None
         )
 
         from panda3d.core import LColor, LVector3, PointLight
@@ -181,7 +189,7 @@ class Buildings(MapEntity):
             log.warning("procbuilding not available — buildings disabled: %s", exc)
             return
 
-        self._build_queue   = list(self._entries)
+        self._build_queue   = deque(self._entries)
         self._build_parent  = parent
         self._PolygonHouse  = PolygonHouse
         self._PolygonHouseParams = PolygonHouseParams
@@ -195,11 +203,11 @@ class Buildings(MapEntity):
             if not self._build_queue:
                 log.info("buildings: geometry build complete")
                 return task.done
-            ce, cn, local_verts, floors, bldg_id = self._build_queue.pop(0)
+            ce, cn, local_verts, floors, bldg_id = self._build_queue.popleft()
             if len(local_verts) < 3:
                 continue
             td  = self._terrain.data
-            z   = self._sample_z(ce, cn, td)
+            z   = sample_z(ce, cn, td.heightmap, td.heightmap.shape[0], td.radius_m)
             rng = Random(bldg_id)
 
             lod_np = self._build_parent.attachNewNode(LODNode(f"bld_{bldg_id}"))
@@ -223,11 +231,10 @@ class Buildings(MapEntity):
         if not self._bldg_pts or self._bldg_pos_arr is None:
             return task.cont
 
-        tod    = getattr(builtins.base, 'time_of_day', 0.5)
-        sin_el = -math.cos(2.0 * math.pi * tod)
-        intensity = float(np.clip((-sin_el + 0.05) / 0.15, 0.0, 1.0))
-
         from panda3d.core import LColor
+
+        intensity = tod_intensity(getattr(builtins.base, 'time_of_day', 0.5))
+
         col = LColor(_BLDG_LIGHT_COLOR[0] * intensity,
                      _BLDG_LIGHT_COLOR[1] * intensity,
                      _BLDG_LIGHT_COLOR[2] * intensity, 1.0)
@@ -239,14 +246,10 @@ class Buildings(MapEntity):
                 pl_np.setPos(0.0, 0.0, -99999.0)
             return task.cont
 
-        cam    = builtins.base.camera.getPos()
-        ce, cn = float(cam.x), float(cam.y)
-
-        diffs = self._bldg_pos_arr - np.array([ce, cn], dtype=np.float32)
-        dists = (diffs * diffs).sum(axis=1)
-        n_all = len(self._bldg_pos_arr)
-        k     = min(_BLDG_LIGHT_POOL, n_all)
-        idx   = np.argpartition(dists, k - 1)[:k] if k < n_all else np.arange(n_all)
+        cam = builtins.base.camera.getPos()
+        idx = (self._bldg_all_idx if self._bldg_all_idx is not None
+               else nearest_k_idx(self._bldg_pos_arr, float(cam.x), float(cam.y),
+                                   _BLDG_LIGHT_POOL))
 
         for i, j in enumerate(idx):
             e, n, z = self._bldg_light_positions[int(j)]
@@ -254,18 +257,3 @@ class Buildings(MapEntity):
 
         return task.cont
 
-    def _sample_z(self, east: float, north: float, td) -> float:
-        g     = td.heightmap.shape[0]
-        r     = float(td.radius_m)
-        scale = (g - 1) / (2.0 * r)
-        col   = float(np.clip((east  + r) * scale, 0, g - 1))
-        row   = float(np.clip((r - north) * scale, 0, g - 1))
-        r0    = min(int(row), g - 2)
-        c0    = min(int(col), g - 2)
-        fr    = row - r0; fc = col - c0
-        return float(
-            td.heightmap[r0,   c0  ] * (1-fr)*(1-fc) +
-            td.heightmap[r0,   c0+1] * (1-fr)*fc     +
-            td.heightmap[r0+1, c0  ] * fr    *(1-fc) +
-            td.heightmap[r0+1, c0+1] * fr    *fc
-        )

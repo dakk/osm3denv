@@ -16,6 +16,7 @@ import logging
 
 import numpy as np
 
+from osm3denv.entities.utils import sample_z_vec
 from osm3denv.entity import MapEntity
 from osm3denv.fetch.osm import OSMData
 from osm3denv.frame import Frame
@@ -36,26 +37,6 @@ _FALLBACK_COLOR: dict[str, bytes] = {
     "brick":    bytes([160,  85,  65]),
     "plaster":  bytes([228, 218, 198]),
 }
-
-
-# ---------------------------------------------------------------------------
-# Terrain sampling
-# ---------------------------------------------------------------------------
-
-def _sample_z_vec(e_arr, n_arr, heightmap, grid, radius_m):
-    scale = (grid - 1) / (2.0 * radius_m)
-    col_f = np.clip((np.asarray(e_arr, np.float64) + radius_m) * scale, 0.0, grid - 1)
-    row_f = np.clip((radius_m - np.asarray(n_arr, np.float64)) * scale, 0.0, grid - 1)
-    r0 = np.minimum(row_f.astype(np.int32), grid - 2)
-    c0 = np.minimum(col_f.astype(np.int32), grid - 2)
-    fr = row_f - r0
-    fc = col_f - c0
-    return (
-        heightmap[r0,   c0  ] * (1-fr)*(1-fc) +
-        heightmap[r0,   c0+1] * (1-fr)*fc     +
-        heightmap[r0+1, c0  ] * fr    *(1-fc) +
-        heightmap[r0+1, c0+1] * fr    *fc
-    ).astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +152,7 @@ class Fences(MapEntity):
 
             cx     = float(np.mean(east))
             cy     = float(np.mean(north))
-            z_vals = _sample_z_vec(east, north, heightmap, grid, r)
+            z_vals = sample_z_vec(east, north, heightmap, grid, r)
             strip  = _build_fence_strip(east, north, z_vals,
                                         close_ring=close_ring,
                                         offset_e=cx, offset_n=cy)
@@ -188,12 +169,13 @@ class Fences(MapEntity):
                 n_residential += 1
 
         for rel in self._osm.filter_relations(lambda t: t.get("landuse") == "residential"):
-            for role, ring in rel.rings:
+            for i, (role, ring) in enumerate(rel.rings):
                 if role not in ("outer", "") or len(ring) < 4:
                     continue
-                if _process(ring, rel.id, close_ring=True):
+                # Negative key: can't collide with positive OSM way IDs.
+                # Each outer ring of a multipolygon gets its own dedup slot.
+                if _process(ring, -(rel.id * 10000 + i), close_ring=True):
                     n_residential += 1
-                    break
 
         for way in self._osm.filter_ways(
                 lambda t: t.get("barrier") in self._BARRIER_TAGS):
