@@ -26,6 +26,12 @@ uniform vec3 u_sun_dir;    // normalised direction toward the sun
 uniform vec3 u_sun_color;  // sun light colour (black at night)
 uniform vec3 u_amb_color;  // ambient light colour
 
+#define N_SPOTS 6
+uniform vec3  u_spot_pos[N_SPOTS];
+uniform vec3  u_spot_color[N_SPOTS];
+uniform float u_spot_cos_cutoff;
+uniform vec3  u_spot_atten;  // constant, linear, quadratic
+
 in vec3 vWorldPos;
 in vec3 vWorldNormal;
 
@@ -185,8 +191,26 @@ void main() {
     // ------------------------------------------------------------------
     // Lighting: Lambertian diffuse + ambient (driven by day/night cycle)
     // ------------------------------------------------------------------
+    vec3 albedo = color;
     float diff = max(dot(N, u_sun_dir), 0.0);
-    color = color * (u_amb_color + u_sun_color * diff * 0.80);
+    color = albedo * (u_amb_color + u_sun_color * diff * 0.80);
+
+    // Spotlights (street lamps) — contribute via custom uniform arrays
+    vec3 spot_accum = vec3(0.0);
+    for (int i = 0; i < N_SPOTS; i++) {
+        if (u_spot_pos[i].z < -9000.0) continue;
+        vec3  to_light  = u_spot_pos[i] - vWorldPos;
+        float dist      = length(to_light);
+        if (dist < 0.001) continue;
+        vec3  L         = to_light / dist;
+        float cos_theta = L.z;  // spot points straight down; L.z = cosine from nadir
+        if (cos_theta < u_spot_cos_cutoff) continue;
+        float atten = 1.0 / dot(u_spot_atten, vec3(1.0, dist, dist * dist));
+        float edge  = smoothstep(u_spot_cos_cutoff, u_spot_cos_cutoff + 0.05, cos_theta);
+        float sdiff = max(dot(N, L), 0.0);
+        spot_accum += u_spot_color[i] * sdiff * atten * edge;
+    }
+    color += albedo * spot_accum;
 
     p3d_FragColor = vec4(color, 1.0);
 }

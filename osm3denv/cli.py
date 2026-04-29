@@ -32,9 +32,12 @@ log = logging.getLogger("osm3denv")
 @click.option("--no-powerlines", is_flag=True, help="Skip power line rendering.")
 @click.option("--no-vegetation", is_flag=True, help="Skip vegetation rendering.")
 @click.option("--no-buildings",  is_flag=True, help="Skip building rendering.")
+@click.option("--no-fences",     is_flag=True, help="Skip fence rendering.")
+@click.option("--no-streetlamps", is_flag=True, help="Skip street lamp rendering.")
 @click.option("-v", "--verbose", count=True, help="Increase log verbosity (-v, -vv).")
 def main(lat, lon, radius_m, grid, cache_dir, fetch_only, refresh_cache, dem_zoom,
-         no_roads, no_powerlines, no_vegetation, no_buildings, verbose):
+         no_roads, no_powerlines, no_vegetation, no_buildings, no_fences,
+         no_streetlamps, verbose):
     """Render a 3D terrain around (lat, lon) from SRTM and OSM data."""
     _logging.configure(verbose)
 
@@ -55,18 +58,23 @@ def main(lat, lon, radius_m, grid, cache_dir, fetch_only, refresh_cache, dem_zoo
 
     frame = make_frame(cfg.lat, cfg.lon)
     run(cfg, frame, no_roads=no_roads, no_powerlines=no_powerlines,
-        no_vegetation=no_vegetation, no_buildings=no_buildings)
+        no_vegetation=no_vegetation, no_buildings=no_buildings,
+        no_fences=no_fences, no_streetlamps=no_streetlamps)
 
 
 def run(cfg: Config, frame, *,
         no_roads: bool = False,
         no_powerlines: bool = False,
         no_vegetation: bool = False,
-        no_buildings: bool = False) -> None:
+        no_buildings: bool = False,
+        no_fences: bool = False,
+        no_streetlamps: bool = False) -> None:
     from osm3denv.entities.beach import Beach
     from osm3denv.entities.buildings import Buildings
     from osm3denv.entities.clouds import Clouds
+    from osm3denv.entities.fences import Fences
     from osm3denv.entities.powerlines import PowerLines
+    from osm3denv.entities.streetlamps import StreetLamps
     from osm3denv.entities.roads import Roads
     from osm3denv.entities.sea import Sea
     from osm3denv.entities.terrain import Terrain
@@ -81,9 +89,9 @@ def run(cfg: Config, frame, *,
     log.info("osm: %d ways, %d relations, %d nodes",
              len(osm_data.ways), len(osm_data.relations), len(osm_data.nodes))
 
-    tex_paths      = tex_fetch.fetch(cfg.tex_cache)
-    bld_tex_paths  = tex_fetch.fetch_building(cfg.tex_cache)
-    road_tex_paths = tex_fetch.fetch_road(cfg.tex_cache)
+    tex_paths       = tex_fetch.fetch(cfg.tex_cache)
+    road_tex_paths  = tex_fetch.fetch_road(cfg.tex_cache)
+    fence_tex_paths = tex_fetch.fetch_fence(cfg.tex_cache)
 
     from osm3denv.render.minimap import Minimap
     minimap = Minimap(cfg.lat, cfg.lon, cfg.radius_m,
@@ -134,9 +142,20 @@ def run(cfg: Config, frame, *,
         entities.append(vegetation)
 
     if not no_buildings:
-        buildings = Buildings(osm_data, frame, cfg.radius_m, terrain, bld_tex_paths)
+        buildings = Buildings(osm_data, frame, cfg.radius_m, terrain)
         buildings.build()
         entities.append(buildings)
+
+    if not no_fences:
+        fences = Fences(osm_data, frame, cfg.radius_m, terrain, fence_tex_paths)
+        fences.build()
+        entities.append(fences)
+
+    if not no_streetlamps:
+        streetlamps = StreetLamps(osm_data, frame, cfg.radius_m, terrain,
+                                  cache_dir=cfg.cache_dir)
+        streetlamps.build()
+        entities.append(streetlamps)
 
     if cfg.fetch_only:
         log.info("fetch-only: done.")

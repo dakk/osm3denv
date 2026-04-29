@@ -31,6 +31,8 @@ MODEL_POOL: dict[str, list[str]] = {
                       "grass", "grass_patches"],
     "village_green": ["oak_tree", "elm_tree", "willow", "maple_tree"],
     "allotments":    ["acacia_tree", "oak_tree", "maple_tree"],
+    "residential":   ["oak_tree", "beech_tree", "willow", "maple_tree",
+                      "elm_tree", "birch_tree", "acacia_tree"],
     "tree":          ["oak_tree", "elm_tree", "beech_tree", "birch_tree",
                       "willow", "pine_tree", "fir_tree", "acacia_tree",
                       "maple_tree", "old_tree"],
@@ -77,7 +79,45 @@ MODEL_HEIGHTS: dict[str, tuple[float, float]] = {
 }
 
 _ALL_SLUGS: list[str] = sorted(_DOWNLOAD_URLS.keys())
-SUBDIR = "evolveduk"
+SUBDIR = "nature"
+
+# ---------------------------------------------------------------------------
+# Street furniture models
+# ---------------------------------------------------------------------------
+
+FURNITURE_MODELS: dict[str, str] = {
+    "street_lamp": "https://sketchfab.com/3d-models/street-lamp-152055979ddd48669529f5d4f5f3543c#download",
+}
+FURNITURE_SUBDIR = "streetfurniture"
+
+
+def fetch_furniture(cache_dir: Path) -> dict[str, Path]:
+    """Return ``{slug: glb_path}`` for each GLB found in ``<cache_dir>/streetfurniture/``.
+
+    Missing files are logged as warnings with their download URLs.
+    """
+    dest = cache_dir / FURNITURE_SUBDIR
+    dest.mkdir(parents=True, exist_ok=True)
+
+    result: dict[str, Path] = {}
+    missing: list[str] = []
+
+    for slug, url in FURNITURE_MODELS.items():
+        p = dest / f"{slug}.glb"
+        if p.exists():
+            result[slug] = p
+        else:
+            missing.append((slug, url))
+
+    if missing:
+        lines = "\n  ".join(f"{s}.glb  →  {u}" for s, u in missing)
+        log.warning(
+            "street furniture models missing from %s\n"
+            "Download as GLB from Sketchfab and rename to <slug>.glb:\n  %s",
+            dest, lines,
+        )
+
+    return result
 
 
 def fetch(cache_dir: Path, slugs: list[str] | None = None) -> dict[str, Path]:
