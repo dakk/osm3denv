@@ -97,6 +97,10 @@ class TerrainViewer(ShowBase):
         props.setTitle("osm3denv — terrain")
         self.win.requestProperties(props)
 
+        # Default spotlight uniforms — always set so shaders compile even when
+        # StreetLamps is disabled.  StreetLamps.attach_to() overwrites these.
+        self._init_spot_defaults()
+
         for entity in (entities or []):
             entity.attach_to(self.render)
 
@@ -187,6 +191,21 @@ class TerrainViewer(ShowBase):
             minimap.attach_to(self)
 
         self.taskMgr.add(self._update, "camera_update")
+
+    # ── spotlight defaults ────────────────────────────────────────────────────
+
+    def _init_spot_defaults(self) -> None:
+        from panda3d.core import LVecBase3f, LVector3, PTA_LVecBase3f
+        _N = 6
+        pta_pos = PTA_LVecBase3f.emptyArray(_N)
+        pta_col = PTA_LVecBase3f.emptyArray(_N)
+        for i in range(_N):
+            pta_pos[i] = LVecBase3f(0.0, 0.0, -99999.0)
+            pta_col[i] = LVecBase3f(0.0, 0.0, 0.0)
+        self.render.setShaderInput("u_spot_pos",        pta_pos)
+        self.render.setShaderInput("u_spot_color",      pta_col)
+        self.render.setShaderInput("u_spot_cos_cutoff", math.cos(math.radians(25.0)))
+        self.render.setShaderInput("u_spot_atten",      LVector3(1.0, 0.0, 0.014))
 
     # ── time controls ─────────────────────────────────────────────────────────
 
