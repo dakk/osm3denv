@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import builtins
 import logging
+import math
 import sys
 from collections import deque
 from pathlib import Path
@@ -36,8 +37,14 @@ _MAX_DIM = 80.0
 _MIN_DIM =  3.5
 _BUDGET  = 5000
 
-_LOD_FULL   =  80.0
 _LOD_MEDIUM = 400.0
+
+# Streaming — only cells within this radius are in the scene graph
+_BLDG_CELL_SIZE     = 200.0   # metres per cell
+_BLDG_STREAM_RADIUS = 600.0   # load cells within this distance
+_BLDG_UNLOAD_RADIUS = 900.0   # hysteresis: unload beyond this
+_BLDG_PER_FRAME     = 8       # buildings built per frame (procbuilding is slow)
+_BLDG_CELL_CAP      = 40      # max buildings per cell
 
 # Window point-light pool
 _BLDG_LIGHT_POOL  = 8
@@ -106,7 +113,18 @@ class Buildings(MapEntity):
             if added:
                 seen.add(rel.id)
 
-        log.info("buildings: %d structures queued", len(self._entries))
+        # Index entries into spatial cells for streaming
+        self._bldg_by_cell: dict[tuple, list] = {}
+        for entry in self._entries:
+            ce, cn = entry[0], entry[1]
+            ci = int(ce // _BLDG_CELL_SIZE)
+            cj = int(cn // _BLDG_CELL_SIZE)
+            bucket = self._bldg_by_cell.setdefault((ci, cj), [])
+            if len(bucket) < _BLDG_CELL_CAP:
+                bucket.append(entry)
+
+        log.info("buildings: %d structures across %d cells",
+                 len(self._entries), len(self._bldg_by_cell))
 
     def _process_geometry(self, pts, tags: dict, bldg_id: int) -> tuple | None:
         if len(pts) < 4:
@@ -182,38 +200,90 @@ class Buildings(MapEntity):
 
         builtins.base.taskMgr.add(self._bldg_light_task, "bldg_lights")
 
-        # ---- Building geometry (deferred across frames, lights work immediately) --
+        # ---- Streaming geometry (lights work immediately, geometry streams in) ----
         try:
             from procbuilding import PolygonHouse, PolygonHouseParams  # type: ignore[import]
         except ImportError as exc:
             log.warning("procbuilding not available — buildings disabled: %s", exc)
             return
 
-        self._build_queue   = deque(self._entries)
-        self._build_parent  = parent
-        self._PolygonHouse  = PolygonHouse
+        self._bldg_root      = parent.attachNewNode("buildings")
+        self._PolygonHouse   = PolygonHouse
         self._PolygonHouseParams = PolygonHouseParams
-        builtins.base.taskMgr.add(self._build_task, "bld_build")
+        self._active_cells:  dict[tuple, object] = {}
+        self._pending_cells: deque = deque()
+        self._cur_cell_key:  tuple | None = None
+        self._cur_cell_np    = None
+        self._cur_cell_bldgs: deque = deque()
+        builtins.base.taskMgr.add(self._bldg_stream_task, "bldg_stream")
 
-    _BUILD_PER_FRAME = 30
-
-    def _build_task(self, task):
+    def _bldg_stream_task(self, task):
         from panda3d.core import LODNode
-        for _ in range(self._BUILD_PER_FRAME):
-            if not self._build_queue:
-                log.info("buildings: geometry build complete")
-                return task.done
-            ce, cn, local_verts, floors, bldg_id = self._build_queue.popleft()
+
+        pos   = builtins.base.camera.getPos()
+        cam_e = float(pos.x)
+        cam_n = float(pos.y)
+
+        # --- Determine which cells are needed ---
+        r_cells = int(_BLDG_STREAM_RADIUS / _BLDG_CELL_SIZE) + 1
+        ci_cam  = int(cam_e // _BLDG_CELL_SIZE)
+        cj_cam  = int(cam_n // _BLDG_CELL_SIZE)
+        needed: set[tuple] = set()
+        for dci in range(-r_cells, r_cells + 1):
+            for dcj in range(-r_cells, r_cells + 1):
+                ci, cj = ci_cam + dci, cj_cam + dcj
+                if (ci, cj) not in self._bldg_by_cell:
+                    continue
+                cx = (ci + 0.5) * _BLDG_CELL_SIZE
+                cn = (cj + 0.5) * _BLDG_CELL_SIZE
+                if math.sqrt((cx - cam_e) ** 2 + (cn - cam_n) ** 2) <= _BLDG_STREAM_RADIUS:
+                    needed.add((ci, cj))
+
+        # --- Queue new cells ---
+        queued = set(self._pending_cells)
+        for key in needed - set(self._active_cells) - queued:
+            self._pending_cells.append(key)
+
+        # --- Unload distant cells ---
+        for key in list(self._active_cells):
+            ci, cj = key
+            cx = (ci + 0.5) * _BLDG_CELL_SIZE
+            cn = (cj + 0.5) * _BLDG_CELL_SIZE
+            if math.sqrt((cx - cam_e) ** 2 + (cn - cam_n) ** 2) > _BLDG_UNLOAD_RADIUS:
+                self._active_cells.pop(key).removeNode()
+                if self._cur_cell_key == key:
+                    self._cur_cell_bldgs.clear()
+                    self._cur_cell_key = None
+
+        # --- Build up to N buildings this frame ---
+        for _ in range(_BLDG_PER_FRAME):
+            # Advance to next pending cell if current is exhausted
+            if not self._cur_cell_bldgs:
+                if not self._pending_cells:
+                    break
+                key = self._pending_cells.popleft()
+                if key in self._active_cells:
+                    continue
+                cell_np = self._bldg_root.attachNewNode(f"bc_{key[0]}_{key[1]}")
+                self._active_cells[key] = cell_np
+                self._cur_cell_key  = key
+                self._cur_cell_np   = cell_np
+                self._cur_cell_bldgs = deque(self._bldg_by_cell.get(key, []))
+
+            if not self._cur_cell_bldgs:
+                break
+
+            ce, cn, local_verts, floors, bldg_id = self._cur_cell_bldgs.popleft()
             if len(local_verts) < 3:
                 continue
             td  = self._terrain.data
             z   = sample_z(ce, cn, td.heightmap, td.heightmap.shape[0], td.radius_m)
             rng = Random(bldg_id)
 
-            lod_np = self._build_parent.attachNewNode(LODNode(f"bld_{bldg_id}"))
+            lod_np = self._cur_cell_np.attachNewNode(LODNode(f"b_{bldg_id}"))
             lod_np.setPos(float(ce), float(cn), float(z))
             try:
-                full = lod_np.attachNewNode("full")
+                full = lod_np.attachNewNode("f")
                 self._PolygonHouse(self._PolygonHouseParams(
                     verts=local_verts,
                     num_floors=floors,
@@ -223,8 +293,9 @@ class Buildings(MapEntity):
                 )).build(full)
                 lod_np.node().addSwitch(_LOD_MEDIUM, 0.0)
             except Exception as exc:
-                log.warning("bld %d failed: %s", bldg_id, exc)
+                log.debug("bld %d failed: %s", bldg_id, exc)
                 lod_np.removeNode()
+
         return task.cont
 
     def _bldg_light_task(self, task):
