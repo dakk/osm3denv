@@ -174,52 +174,50 @@ class Buildings(MapEntity):
 
         builtins.base.taskMgr.add(self._bldg_light_task, "bldg_lights")
 
-        # ---- Building geometry (optional — lights work without procbuilding) ----
+        # ---- Building geometry (deferred across frames, lights work immediately) --
         try:
             from procbuilding import PolygonHouse, PolygonHouseParams  # type: ignore[import]
         except ImportError as exc:
             log.warning("procbuilding not available — buildings disabled: %s", exc)
             return
 
-        from panda3d.core import LODNode
+        self._build_queue   = list(self._entries)
+        self._build_parent  = parent
+        self._PolygonHouse  = PolygonHouse
+        self._PolygonHouseParams = PolygonHouseParams
+        builtins.base.taskMgr.add(self._build_task, "bld_build")
 
-        for ce, cn, local_verts, floors, bldg_id in self._entries:
+    _BUILD_PER_FRAME = 30
+
+    def _build_task(self, task):
+        from panda3d.core import LODNode
+        for _ in range(self._BUILD_PER_FRAME):
+            if not self._build_queue:
+                log.info("buildings: geometry build complete")
+                return task.done
+            ce, cn, local_verts, floors, bldg_id = self._build_queue.pop(0)
             if len(local_verts) < 3:
                 continue
-            z = self._sample_z(ce, cn, td)
+            td  = self._terrain.data
+            z   = self._sample_z(ce, cn, td)
             rng = Random(bldg_id)
 
-            wall_color = rng.choice(_WALL_COLORS)
-            roof_color = rng.choice(_ROOF_COLORS)
-
-            lod_np = parent.attachNewNode(LODNode(f"bld_{bldg_id}"))
+            lod_np = self._build_parent.attachNewNode(LODNode(f"bld_{bldg_id}"))
             lod_np.setPos(float(ce), float(cn), float(z))
-            lod = lod_np.node()
-
             try:
                 full = lod_np.attachNewNode("full")
-                PolygonHouse(PolygonHouseParams(
+                self._PolygonHouse(self._PolygonHouseParams(
                     verts=local_verts,
                     num_floors=floors,
-                    wall_color=wall_color,
-                    roof_color=roof_color,
+                    wall_color=rng.choice(_WALL_COLORS),
+                    roof_color=rng.choice(_ROOF_COLORS),
                     windows_per_wall=8,
                 )).build(full)
-                lod.addSwitch(_LOD_FULL, 0.0)
-
-                medium = lod_np.attachNewNode("medium")
-                PolygonHouse(PolygonHouseParams(
-                    verts=local_verts,
-                    num_floors=floors,
-                    wall_color=wall_color,
-                    roof_color=roof_color,
-                    windows_per_wall=2,
-                )).build(medium)
-                lod.addSwitch(_LOD_MEDIUM, _LOD_FULL)
-
+                lod_np.node().addSwitch(_LOD_MEDIUM, 0.0)
             except Exception as exc:
                 log.warning("bld %d failed: %s", bldg_id, exc)
                 lod_np.removeNode()
+        return task.cont
 
     def _bldg_light_task(self, task):
         if not self._bldg_pts or self._bldg_pos_arr is None:

@@ -13,7 +13,6 @@ its polygon centroid so distance culling is per-strip rather than global.
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
 
 import numpy as np
 
@@ -208,7 +207,6 @@ class Fences(MapEntity):
         if not self._strips:
             return
 
-        from panda3d.core import LODNode
         from osm3denv.render.helpers import attach_mesh, load_shader
 
         shader = load_shader("fence")
@@ -232,19 +230,31 @@ class Fences(MapEntity):
             tex.setRamImage(fallback_rgb)
             return tex
 
-        # Group strips by variant
-        by_variant: dict[int, list] = defaultdict(list)
+        # Group strips by variant and merge into one mesh per variant.
+        # Vertices are stored centroid-relative; un-offset to world space before
+        # concatenating so the parent node can sit at the origin.
+        by_variant: dict[int, dict] = {}
         for verts, norms, uvs, indices, cx, cy, vidx in self._strips:
-            by_variant[vidx].append((verts, norms, uvs, indices, cx, cy))
+            if vidx not in by_variant:
+                by_variant[vidx] = {"verts": [], "norms": [], "uvs": [],
+                                     "indices": [], "v_count": 0}
+            m = by_variant[vidx]
+            v_world = verts.copy()
+            v_world[:, 0] += cx
+            v_world[:, 1] += cy
+            m["verts"].append(v_world)
+            m["norms"].append(norms)
+            m["uvs"].append(uvs)
+            m["indices"].append(indices + m["v_count"])
+            m["v_count"] += len(verts)
 
         fence_root = parent.attachNewNode("fences")
 
-        for vidx, strip_list in by_variant.items():
+        for vidx, m in by_variant.items():
             vname      = _FENCE_VARIANTS[vidx]
             variant_np = fence_root.attachNewNode(f"fence_{vname}")
             variant_np.setTwoSided(True)
 
-            # Texture for this variant
             tex_p   = self._fence_tex_paths.get(vname, {})
             col_tex = _tex(tex_p.get("color"),  _FALLBACK_COLOR[vname], srgb=True)
             nrm_tex = _tex(tex_p.get("normal"), bytes([128, 128, 255]),  srgb=False)
@@ -255,15 +265,12 @@ class Fences(MapEntity):
                 variant_np.setShaderInput("u_fence_nrm",     nrm_tex)
                 variant_np.setShaderInput("u_bump_strength", 0.6)
 
-            # Per-strip LOD node centred at the strip's polygon centroid
-            for verts, norms, uvs, indices, cx, cy in strip_list:
-                lod_np = variant_np.attachNewNode(LODNode("fstrip"))
-                lod_np.setPos(float(cx), float(cy), 0.0)
-                lod_np.node().addSwitch(_LOD_DIST, 0.0)
+            all_verts = np.concatenate(m["verts"])
+            all_norms = np.concatenate(m["norms"])
+            all_uvs   = np.concatenate(m["uvs"])
+            all_idx   = np.concatenate(m["indices"])
+            attach_mesh(variant_np, "fgeom", all_verts, all_norms, all_uvs,
+                        all_idx, depth_offset=1)
 
-                detail = lod_np.attachNewNode("detail")
-                attach_mesh(detail, "fgeom", verts, norms, uvs, indices,
-                            depth_offset=1)
-
-        log.info("fences: attached %d strips across %d texture variants",
+        log.info("fences: merged %d strips into %d draw calls",
                  len(self._strips), len(by_variant))
