@@ -21,15 +21,9 @@ from osm3denv.frame import Frame
 
 log = logging.getLogger(__name__)
 
-_RESIDENTIAL = frozenset({
-    "house", "residential", "detached", "semidetached_house",
-    "terrace", "bungalow", "cottage", "apartments", "dormitory",
-    "villa", "yes",
-})
-
-_MAX_DIM = 35.0   # skip buildings larger than this
+_MAX_DIM = 80.0   # skip buildings larger than this (airports, stadiums)
 _MIN_DIM =  3.5
-_BUDGET  = 500    # max buildings rendered per scene
+_BUDGET  = 5000
 
 _LOD_FULL   =  80.0
 _LOD_MEDIUM = 300.0
@@ -50,23 +44,37 @@ class Buildings(MapEntity):
 
     def build(self) -> None:
         seen: set[int] = set()
-        for way in self._osm.filter_ways(
-                lambda t: t.get("building") in _RESIDENTIAL or t.get("building") == "yes"):
+
+        for way in self._osm.filter_ways(lambda t: bool(t.get("building"))):
             if len(self._entries) >= _BUDGET:
                 break
             if way.id in seen:
                 continue
-            entry = self._process_way(way)
+            entry = self._process_geometry(way.geometry, way.tags, way.id)
             if entry:
                 self._entries.append(entry)
                 seen.add(way.id)
-        log.info("buildings: %d residential structures queued", len(self._entries))
 
-    def _process_way(self, way) -> tuple | None:
-        if len(way.geometry) < 4:
+        for rel in self._osm.filter_relations(lambda t: bool(t.get("building"))):
+            if len(self._entries) >= _BUDGET:
+                break
+            if rel.id in seen:
+                continue
+            for role, ring in rel.rings:
+                if role not in ("outer", "") or len(ring) < 4:
+                    continue
+                entry = self._process_geometry(ring, rel.tags, rel.id)
+                if entry:
+                    self._entries.append(entry)
+                    seen.add(rel.id)
+                    break
+
+        log.info("buildings: %d structures queued", len(self._entries))
+
+    def _process_geometry(self, pts, tags: dict, bldg_id: int) -> tuple | None:
+        if len(pts) < 4:
             return None
         r    = self._radius_m
-        pts  = way.geometry
         lons = np.fromiter((p[0] for p in pts), np.float64, len(pts))
         lats = np.fromiter((p[1] for p in pts), np.float64, len(pts))
         east, north = self._frame.to_enu(lons, lats)
@@ -80,19 +88,18 @@ class Buildings(MapEntity):
             return None
 
         floors = 2
-        tags = way.tags
         if "building:levels" in tags:
             try:
-                floors = max(1, min(8, int(float(tags["building:levels"]))))
+                floors = max(1, min(12, int(float(tags["building:levels"]))))
             except ValueError:
                 pass
         elif "height" in tags:
             try:
-                floors = max(1, min(8, round(float(tags["height"].split()[0]) / 3.0)))
+                floors = max(1, min(12, round(float(tags["height"].split()[0]) / 3.0)))
             except ValueError:
                 pass
 
-        return (float(east.mean()), float(north.mean()), width, depth, floors, way.id)
+        return (float(east.mean()), float(north.mean()), width, depth, floors, bldg_id)
 
     def attach_to(self, parent) -> None:
         from panda3d.core import LODNode
