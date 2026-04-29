@@ -30,7 +30,12 @@ def sample_z(x: float, y: float,
 
 def sample_z_vec(x_arr, y_arr,
                  heightmap: np.ndarray, grid: int, radius_m: float) -> np.ndarray:
-    """Vectorised bilinear terrain-height sampling; returns float32 array."""
+    """Vectorised bilinear terrain-height sampling; returns float32 array.
+
+    Uses standard bilinear interpolation across the quad.  Prefer
+    ``sample_z_triangle`` where the quad-diagonal crease would be visible
+    (e.g. dense point clouds placed on terrain).
+    """
     scale = (grid - 1) / (2.0 * radius_m)
     col_f = np.clip((np.asarray(x_arr, np.float64) + radius_m) * scale, 0.0, grid - 1)
     row_f = np.clip((radius_m - np.asarray(y_arr, np.float64)) * scale, 0.0, grid - 1)
@@ -43,6 +48,33 @@ def sample_z_vec(x_arr, y_arr,
         heightmap[r0,   c0+1] * (1 - fr) * fc        +
         heightmap[r0+1, c0  ] * fr        * (1 - fc) +
         heightmap[r0+1, c0+1] * fr        * fc
+    ).astype(np.float32)
+
+
+def sample_z_triangle(x_arr, y_arr,
+                      heightmap: np.ndarray, grid: int, radius_m: float) -> np.ndarray:
+    """Vectorised triangle-interpolated terrain-height sampling; returns float32 array.
+
+    Splits each heightmap quad along its NW–SE diagonal and interpolates
+    within the correct triangle.  Avoids the bilinear crease artifact when
+    placing many points on the surface (e.g. vegetation, road ribbons).
+    """
+    scale = (grid - 1) / (2.0 * radius_m)
+    col_f = np.clip((np.asarray(x_arr, np.float64) + radius_m) * scale, 0.0, grid - 1)
+    row_f = np.clip((radius_m - np.asarray(y_arr, np.float64)) * scale, 0.0, grid - 1)
+    r0 = np.minimum(row_f.astype(np.int32), grid - 2)
+    c0 = np.minimum(col_f.astype(np.int32), grid - 2)
+    fr = (row_f - r0).astype(np.float32)
+    fc = (col_f - c0).astype(np.float32)
+    z_nw = heightmap[r0,     c0    ].astype(np.float32)
+    z_ne = heightmap[r0,     c0 + 1].astype(np.float32)
+    z_sw = heightmap[r0 + 1, c0    ].astype(np.float32)
+    z_se = heightmap[r0 + 1, c0 + 1].astype(np.float32)
+    lower_right = (fr + fc) >= 1.0
+    return np.where(
+        lower_right,
+        (fc + fr - 1.0) * z_se + (1.0 - fr) * z_ne + (1.0 - fc) * z_sw,
+        fc * z_ne + (1.0 - fr - fc) * z_nw + fr * z_sw,
     ).astype(np.float32)
 
 

@@ -23,10 +23,11 @@ from osm3denv.frame import Frame
 
 log = logging.getLogger(__name__)
 
-_FENCE_HEIGHT   = 1.8    # metres
-_FENCE_Z_OFFSET = 0.05   # lift above terrain to avoid z-fighting
-_FENCE_TEX_TILE = 2.0    # metres per texture repeat (horizontal)
-_LOD_DIST       = 300.0  # metres — strip invisible beyond this
+_FENCE_HEIGHT     = 1.8    # metres
+_FENCE_Z_OFFSET   = 0.05   # lift above terrain to avoid z-fighting
+_FENCE_TEX_TILE   = 2.0    # metres per texture repeat (horizontal)
+_FENCE_TILE_SIZE  = 400.0  # spatial tile size (matches road tiles)
+_LOD_DIST         = 400.0  # matches building _LOD_MEDIUM
 
 # Variant names must match keys in FENCE_ASSETS (textures.py)
 _FENCE_VARIANTS = ["concrete", "brick", "plaster"]
@@ -212,15 +213,24 @@ class Fences(MapEntity):
             tex.setRamImage(fallback_rgb)
             return tex
 
-        # Group strips by variant and merge into one mesh per variant.
-        # Vertices are stored centroid-relative; un-offset to world space before
-        # concatenating so the parent node can sit at the origin.
-        by_variant: dict[int, dict] = {}
+        # Pre-load textures once; reused across all tiles.
+        textures: dict[str, tuple] = {}
+        for vname in _FENCE_VARIANTS:
+            tex_p   = self._fence_tex_paths.get(vname, {})
+            col_tex = _tex(tex_p.get("color"),  _FALLBACK_COLOR[vname], srgb=True)
+            nrm_tex = _tex(tex_p.get("normal"), bytes([128, 128, 255]),  srgb=False)
+            textures[vname] = (col_tex, nrm_tex)
+
+        # Group strips by (tile, variant); un-offset to world space first.
+        groups: dict[tuple, dict] = {}
         for verts, norms, uvs, indices, cx, cy, vidx in self._strips:
-            if vidx not in by_variant:
-                by_variant[vidx] = {"verts": [], "norms": [], "uvs": [],
-                                     "indices": [], "v_count": 0}
-            m = by_variant[vidx]
+            ti = int(cx // _FENCE_TILE_SIZE)
+            tj = int(cy // _FENCE_TILE_SIZE)
+            key = (ti, tj, vidx)
+            if key not in groups:
+                groups[key] = {"verts": [], "norms": [], "uvs": [],
+                               "indices": [], "v_count": 0}
+            m = groups[key]
             v_world = verts.copy()
             v_world[:, 0] += cx
             v_world[:, 1] += cy
@@ -230,17 +240,29 @@ class Fences(MapEntity):
             m["indices"].append(indices + m["v_count"])
             m["v_count"] += len(verts)
 
+        from panda3d.core import LODNode
         fence_root = parent.attachNewNode("fences")
 
-        for vidx, m in by_variant.items():
+        # One LODNode per tile; one variant NodePath per (tile, variant) group.
+        tile_details: dict[tuple, object] = {}  # (ti, tj) -> detail NodePath
+
+        for (ti, tj, vidx), m in groups.items():
+            tile_cx = (ti + 0.5) * _FENCE_TILE_SIZE
+            tile_cy = (tj + 0.5) * _FENCE_TILE_SIZE
+
+            if (ti, tj) not in tile_details:
+                lod_np = fence_root.attachNewNode(LODNode(f"flod_{ti}_{tj}"))
+                lod_np.setPos(float(tile_cx), float(tile_cy), 0.0)
+                lod_np.node().addSwitch(_LOD_DIST, 0.0)
+                detail = lod_np.attachNewNode("detail")
+                tile_details[(ti, tj)] = detail
+
+            detail = tile_details[(ti, tj)]
             vname      = _FENCE_VARIANTS[vidx]
-            variant_np = fence_root.attachNewNode(f"fence_{vname}")
+            variant_np = detail.attachNewNode(f"fence_{vname}")
             variant_np.setTwoSided(True)
 
-            tex_p   = self._fence_tex_paths.get(vname, {})
-            col_tex = _tex(tex_p.get("color"),  _FALLBACK_COLOR[vname], srgb=True)
-            nrm_tex = _tex(tex_p.get("normal"), bytes([128, 128, 255]),  srgb=False)
-
+            col_tex, nrm_tex = textures[vname]
             if shader:
                 variant_np.setShader(shader)
                 variant_np.setShaderInput("u_fence_col",     col_tex)
@@ -248,11 +270,13 @@ class Fences(MapEntity):
                 variant_np.setShaderInput("u_bump_strength", 0.6)
 
             all_verts = np.concatenate(m["verts"])
+            all_verts[:, 0] -= tile_cx   # make tile-relative
+            all_verts[:, 1] -= tile_cy
             all_norms = np.concatenate(m["norms"])
             all_uvs   = np.concatenate(m["uvs"])
             all_idx   = np.concatenate(m["indices"])
             attach_mesh(variant_np, "fgeom", all_verts, all_norms, all_uvs,
                         all_idx, depth_offset=1)
 
-        log.info("fences: merged %d strips into %d draw calls",
-                 len(self._strips), len(by_variant))
+        log.info("fences: %d strips → %d tiles, LOD dist=%.0fm",
+                 len(self._strips), len(tile_details), _LOD_DIST)

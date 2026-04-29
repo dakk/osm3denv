@@ -18,6 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
+from osm3denv.entities.utils import sample_z_triangle
 from osm3denv.entity import MapEntity
 from osm3denv.fetch.osm import OSMData
 from osm3denv.frame import Frame
@@ -83,30 +84,6 @@ def _classify(tags: dict) -> str | None:
     if landuse == "allotments":                          return "allotments"
     if landuse == "residential":                         return "residential"
     return None
-
-
-# ---------------------------------------------------------------------------
-# Terrain sampling
-# ---------------------------------------------------------------------------
-
-def _sample_z_triangle_vec(e_arr, n_arr, heightmap, grid, radius_m):
-    scale = (grid - 1) / (2.0 * radius_m)
-    col_f = np.clip((np.asarray(e_arr, np.float64) + radius_m) * scale, 0.0, grid - 1)
-    row_f = np.clip((radius_m - np.asarray(n_arr, np.float64)) * scale, 0.0, grid - 1)
-    r0 = np.minimum(row_f.astype(np.int32), grid - 2)
-    c0 = np.minimum(col_f.astype(np.int32), grid - 2)
-    fr = (row_f - r0).astype(np.float32)
-    fc = (col_f - c0).astype(np.float32)
-    z_nw = heightmap[r0,     c0    ].astype(np.float32)
-    z_ne = heightmap[r0,     c0 + 1].astype(np.float32)
-    z_sw = heightmap[r0 + 1, c0    ].astype(np.float32)
-    z_se = heightmap[r0 + 1, c0 + 1].astype(np.float32)
-    lower_right = (fr + fc) >= 1.0
-    return np.where(
-        lower_right,
-        (fc + fr - 1.0) * z_se + (1.0 - fr) * z_ne + (1.0 - fc) * z_sw,
-        fc * z_ne + (1.0 - fr - fc) * z_nw + fr * z_sw,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -288,7 +265,7 @@ class Vegetation(MapEntity):
             lons  = np.array([nd.lon for nd in tree_nodes])
             lats  = np.array([nd.lat for nd in tree_nodes])
             e_arr, n_arr = self._frame.to_enu(lons, lats)
-            z_arr = _sample_z_triangle_vec(e_arr, n_arr, self._heightmap, self._grid, r)
+            z_arr = sample_z_triangle(e_arr, n_arr, self._heightmap, self._grid, r)
             valid = (np.abs(e_arr) <= r) & (np.abs(n_arr) <= r) & (z_arr >= -0.5)
             for nd, ok, e, n, z in zip(tree_nodes, valid, e_arr, n_arr, z_arr):
                 if not ok:
@@ -451,7 +428,7 @@ class Vegetation(MapEntity):
             )
             if len(se) == 0:
                 continue
-            z_vals = _sample_z_triangle_vec(
+            z_vals = sample_z_triangle(
                 se, sn, self._heightmap, self._grid, self._radius_m)
             h_vals = rng.uniform(vtype.h_min, vtype.h_max, len(se)).astype(np.float32)
             valid  = z_vals >= -0.5
@@ -469,7 +446,7 @@ class Vegetation(MapEntity):
             _GROUNDCOVER_SPACING, 0.5, rng,
         )
         if len(se) > 0:
-            z_vals = _sample_z_triangle_vec(
+            z_vals = sample_z_triangle(
                 se, sn, self._heightmap, self._grid, self._radius_m)
             for i in np.where(z_vals >= -0.5)[0]:
                 groundcover.append((float(se[i]), float(sn[i]),

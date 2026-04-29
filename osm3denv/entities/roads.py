@@ -15,6 +15,7 @@ import logging
 
 import numpy as np
 
+from osm3denv.entities.utils import sample_z_triangle
 from osm3denv.entity import MapEntity
 from osm3denv.fetch.osm import OSMData
 from osm3denv.frame import Frame
@@ -28,6 +29,22 @@ log = logging.getLogger(__name__)
 _LANE_WIDTH_M    = 3.5   # metres per lane
 _ROAD_Z_OFFSET   = 0.15  # metres above terrain
 _ROAD_TEX_TILE_M = 3.5   # metres per texture repeat (one lane width)
+
+# Spatial tiling for per-tile LOD
+_ROAD_TILE_SIZE = 400.0   # metres per tile cell
+_ROAD_LOD_NEAR  = 1000.0  # all roads visible within this distance from tile centre
+_ROAD_LOD_FAR   = 4000.0  # only major roads visible from LOD_NEAR to LOD_FAR
+
+# Road types kept at the medium LOD level (major only)
+_MAJOR_HIGHWAY = {
+    "motorway",  "motorway_link",
+    "trunk",     "trunk_link",
+    "primary",   "primary_link",
+}
+
+# Road types always rendered regardless of distance
+_TRUNK_HIGHWAY = {"motorway", "motorway_link", "trunk", "trunk_link",
+                  "primary",  "primary_link"}
 
 # Paved roads → ribbon meshes
 _RIBBON_LANES: dict[str, int] = {
@@ -53,28 +70,6 @@ _SPLATMAP_HALF_W: dict[str, float] = {
 _SMAP_RES    = 2048
 _MIN_HALF_PX = 0.8
 
-
-# ---------------------------------------------------------------------------
-# Terrain height sampling
-# ---------------------------------------------------------------------------
-
-def _sample_z(e_arr, n_arr, heightmap, grid, radius_m):
-    scale = (grid - 1) / (2.0 * radius_m)
-    col_f = np.clip((e_arr + radius_m) * scale, 0.0, grid - 1)
-    row_f = np.clip((radius_m - n_arr)  * scale, 0.0, grid - 1)
-    r0 = np.minimum(row_f.astype(np.int32), grid - 2)
-    c0 = np.minimum(col_f.astype(np.int32), grid - 2)
-    fr = row_f - r0
-    fc = col_f - c0
-    z_nw = heightmap[r0,   c0  ]
-    z_ne = heightmap[r0,   c0+1]
-    z_sw = heightmap[r0+1, c0  ]
-    z_se = heightmap[r0+1, c0+1]
-    lower = (fr + fc) >= 1.0
-    return np.where(lower,
-        (fc + fr - 1.0) * z_se + (1.0 - fr) * z_ne + (1.0 - fc) * z_sw,
-        fc * z_ne + (1.0 - fr - fc) * z_nw + fr * z_sw,
-    ).astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +212,8 @@ class Roads(MapEntity):
         self._radius_m       = radius_m
         self._terrain        = terrain
         self._road_tex_paths = road_tex_paths or {}
-        self._ribbon_geom    = None      # merged (v, n, uv, idx)
+        # {(ti, tj): {"full": [ribbon, ...], "major": [ribbon, ...]}}
+        self._road_tiles: dict[tuple, dict] = {}
         self._splatmap: np.ndarray | None = None
 
     def build(self) -> None:
@@ -226,8 +222,7 @@ class Roads(MapEntity):
         grid      = heightmap.shape[0]
         r         = float(self._radius_m)
 
-        # --- Ribbon meshes for paved roads ---
-        ribbons = []
+        # --- Ribbon meshes for paved roads, bucketed into spatial tiles ---
         n_ribbon = 0
         for way in self._osm.filter_ways(lambda t: t.get("highway") in _RIBBON_LANES):
             geom = way.geometry
@@ -238,13 +233,25 @@ class Roads(MapEntity):
             e, n = self._frame.to_enu(lons, lats)
             if e.max() < -r or e.min() > r or n.max() < -r or n.min() > r:
                 continue
-            lanes  = _RIBBON_LANES[way.tags["highway"]]
+            hwy    = way.tags["highway"]
+            lanes  = _RIBBON_LANES[hwy]
             half_w = lanes * _LANE_WIDTH_M / 2.0
-            z      = _sample_z(e, n, heightmap, grid, r)
-            ribbons.append(_build_ribbon(e, n, z, half_w))
+            z      = sample_z_triangle(e, n, heightmap, grid, r)
+            ribbon = _build_ribbon(e, n, z, half_w)
+            if ribbon is None:
+                continue
+            # Assign to tile based on the way midpoint
+            mid = len(e) // 2
+            ti  = int(float(e[mid]) // _ROAD_TILE_SIZE)
+            tj  = int(float(n[mid]) // _ROAD_TILE_SIZE)
+            if (ti, tj) not in self._road_tiles:
+                self._road_tiles[(ti, tj)] = {"full": [], "major": [], "trunk": []}
+            self._road_tiles[(ti, tj)]["full"].append(ribbon)
+            if hwy in _MAJOR_HIGHWAY:
+                self._road_tiles[(ti, tj)]["major"].append(ribbon)
+            if hwy in _TRUNK_HIGHWAY:
+                self._road_tiles[(ti, tj)]["trunk"].append(ribbon)
             n_ribbon += 1
-
-        self._ribbon_geom = _merge_ribbons(ribbons)
 
         # --- Splatmap for dirt tracks / footways ---
         smap   = np.zeros((_SMAP_RES, _SMAP_RES), dtype=np.float32)
@@ -290,8 +297,8 @@ class Roads(MapEntity):
             target = terrain_np if not terrain_np.isEmpty() else parent
             target.setShaderInput("u_road_splatmap", tex)
 
-        # --- Ribbon meshes → road shader ---
-        if self._ribbon_geom is None:
+        # --- Ribbon meshes → per-tile LOD nodes ---
+        if not self._road_tiles:
             return
 
         shader = load_shader("road")
@@ -319,11 +326,55 @@ class Roads(MapEntity):
         road_col = _tex(road_p.get("color"),  bytes([55, 55, 60]),    srgb=True)
         road_nrm = _tex(road_p.get("normal"), bytes([128, 128, 255]), srgb=False)
 
-        v, n, uv, idx = self._ribbon_geom
-        np_ = attach_mesh(parent, "roads", v, n, uv, idx, depth_offset=1)
+        from panda3d.core import LODNode
+        road_root = parent.attachNewNode("roads")
+        road_root.setTwoSided(True)
         if shader:
-            np_.setShader(shader)
-            np_.setShaderInput("u_road_col",      road_col)
-            np_.setShaderInput("u_road_nrm",      road_nrm)
-            np_.setShaderInput("u_bump_strength", 1.5)
-        np_.setTwoSided(True)   # safety: visible from both sides
+            road_root.setShader(shader)
+            road_root.setShaderInput("u_road_col",      road_col)
+            road_root.setShaderInput("u_road_nrm",      road_nrm)
+            road_root.setShaderInput("u_bump_strength", 1.5)
+
+        n_tiles = 0
+        for (ti, tj), tile in self._road_tiles.items():
+            full_geom  = _merge_ribbons(tile["full"])
+            if full_geom is None:
+                continue
+
+            # Tile centre in world space — LODNode sits here so distance
+            # is measured to the centre of this tile's road content.
+            cx = (ti + 0.5) * _ROAD_TILE_SIZE
+            cn = (tj + 0.5) * _ROAD_TILE_SIZE
+
+            lod_np = road_root.attachNewNode(LODNode(f"rt_{ti}_{tj}"))
+            lod_np.setPos(float(cx), float(cn), 0.0)
+            lod = lod_np.node()
+
+            def _attach_tile_mesh(parent_np, geom, label):
+                v, n, uv, idx = geom
+                v = v.copy(); v[:, 0] -= cx; v[:, 1] -= cn  # tile-relative
+                attach_mesh(parent_np, label, v, n, uv, idx, depth_offset=1)
+
+            # Child 0: all roads (near)
+            full_np = lod_np.attachNewNode("full")
+            _attach_tile_mesh(full_np, full_geom, "rgeom_f")
+            lod.addSwitch(_ROAD_LOD_NEAR, 0.0)
+
+            # Child 1: major roads only (medium distance)
+            major_np = lod_np.attachNewNode("major")
+            major_geom = _merge_ribbons(tile["major"])
+            if major_geom is not None:
+                _attach_tile_mesh(major_np, major_geom, "rgeom_m")
+            lod.addSwitch(_ROAD_LOD_FAR, _ROAD_LOD_NEAR)
+
+            # Child 2: trunk/motorway — always visible beyond LOD_FAR
+            trunk_np = lod_np.attachNewNode("trunk")
+            trunk_geom = _merge_ribbons(tile["trunk"])
+            if trunk_geom is not None:
+                _attach_tile_mesh(trunk_np, trunk_geom, "rgeom_t")
+            lod.addSwitch(1e9, _ROAD_LOD_FAR)
+
+            n_tiles += 1
+
+        log.info("roads: %d tiles, LOD near=%.0fm far=%.0fm",
+                 n_tiles, _ROAD_LOD_NEAR, _ROAD_LOD_FAR)
