@@ -66,7 +66,6 @@ def run(cfg: Config, frame, *,
     from osm3denv.entities.beach import Beach
     from osm3denv.entities.buildings import Buildings
     from osm3denv.entities.clouds import Clouds
-    from osm3denv.entities.coastline import Coastline
     from osm3denv.entities.powerlines import PowerLines
     from osm3denv.entities.roads import Roads
     from osm3denv.entities.sea import Sea
@@ -108,9 +107,6 @@ def run(cfg: Config, frame, *,
     # Phase 3 — everything that depends on terrain data.
     sea.finalize(terrain)
 
-    coastline = Coastline(osm_data, frame, cfg.radius_m, sea_z=sea.sea_z)
-    coastline.build()
-
     water = Water(osm_data, frame, cfg.radius_m, terrain)
     water.build()
 
@@ -120,7 +116,7 @@ def run(cfg: Config, frame, *,
     clouds = Clouds(cfg.radius_m)
     clouds.build()
 
-    entities = [terrain, sea, coastline, water, beach, clouds]
+    entities = [terrain, sea, water, beach, clouds]
 
     if not no_roads:
         roads = Roads(osm_data, frame, cfg.radius_m, terrain, road_tex_paths)
