@@ -146,7 +146,7 @@ class Terrain(MapEntity):
             np_.setShaderInput("u_radius_m",     float(td.radius_m))
             np_.setShaderInput("u_tex_scale",     20.0)
             np_.setShaderInput("u_bump_strength", 3.0)
-            # Blank 1×1 splatmap — Roads.attach_to() overrides this if roads exist.
+            # Blank splatmaps — Roads/Beach attach_to() override these.
             for smap_name in ("u_road_splatmap", "u_beach_splatmap"):
                 blank = Texture(smap_name)
                 blank.setup2dTexture(1, 1, Texture.T_unsigned_byte, Texture.F_luminance)

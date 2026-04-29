@@ -84,6 +84,7 @@ def run(cfg: Config, frame, *,
 
     tex_paths      = tex_fetch.fetch(cfg.tex_cache)
     bld_tex_paths  = tex_fetch.fetch_building(cfg.tex_cache)
+    road_tex_paths = tex_fetch.fetch_road(cfg.tex_cache)
 
     from osm3denv.render.minimap import Minimap
     minimap = Minimap(cfg.lat, cfg.lon, cfg.radius_m,
@@ -122,7 +123,7 @@ def run(cfg: Config, frame, *,
     entities = [terrain, sea, coastline, water, beach, clouds]
 
     if not no_roads:
-        roads = Roads(osm_data, frame, cfg.radius_m)
+        roads = Roads(osm_data, frame, cfg.radius_m, terrain, road_tex_paths)
         roads.build()
         entities.append(roads)
 

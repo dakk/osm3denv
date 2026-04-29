@@ -9,7 +9,7 @@
 uniform float     u_origin_alt_m;   // absolute SRTM altitude of scene origin
 uniform float     u_radius_m;       // half-extent of scene in metres
 uniform float     u_tex_scale;      // metres per texture tile (default 20)
-uniform sampler2D u_road_splatmap;   // dirt-road mask  (r=1 → road)
+uniform sampler2D u_road_splatmap;   // unpaved track/path mask (r=1 → dirt)
 uniform sampler2D u_beach_splatmap;  // beach mask      (r=1 → sand)
 
 uniform sampler2D u_sand_col;   // sand diffuse
@@ -173,12 +173,14 @@ void main() {
     }
 
     // ------------------------------------------------------------------
-    // Road splatmap overlay
+    // Unpaved track / path splatmap overlay (dirt colour)
     // ------------------------------------------------------------------
-    vec2  road_uv = scene_uv;
-    float road_w  = texture(u_road_splatmap, road_uv).r;
-    vec3  dirt    = vec3(0.50, 0.38, 0.22) * (0.90 + 0.20 * micro);
-    color = mix(color, dirt, road_w * 0.88);
+    vec2  scene_uv2 = (vWorldPos.xy + u_radius_m) / (2.0 * u_radius_m);
+    float road_w    = texture(u_road_splatmap, scene_uv2).r;
+    if (road_w > 0.01) {
+        vec3 dirt = vec3(0.50, 0.38, 0.22) * (0.90 + 0.20 * micro);
+        color = mix(color, dirt, road_w * 0.88);
+    }
 
     // ------------------------------------------------------------------
     // Lighting: Lambertian diffuse + ambient (driven by day/night cycle)

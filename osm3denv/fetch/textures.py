@@ -28,6 +28,11 @@ TERRAIN_ASSETS: dict[str, str] = {
     "beach_sand": "Ground054",   # coarse wet beach sand
 }
 
+ROAD_ASSETS: dict[str, str] = {
+    "road":  "Road007",          # asphalt road surface (CC0)
+    "path":  "PavingStones070",  # paved path / footway (CC0)
+}
+
 BUILDING_ASSETS: dict[str, str] = {
     "brick":      "Bricks026",         # red-orange clay brick (rare)
     "plaster":    "Plaster001",        # cream painted plaster
@@ -102,6 +107,15 @@ def fetch(cache_dir: Path) -> dict[str, dict[str, Path]]:
     """Download (once) and return ``{type: {color, normal}}`` for all terrain types."""
     result: dict[str, dict[str, Path]] = {}
     for tex_type, asset_id in TERRAIN_ASSETS.items():
+        paths = _download_asset(asset_id, cache_dir / asset_id)
+        result[tex_type] = paths or {}
+    return result
+
+
+def fetch_road(cache_dir: Path) -> dict[str, dict[str, Path]]:
+    """Download (once) and return ``{type: {color, normal}}`` for road textures."""
+    result: dict[str, dict[str, Path]] = {}
+    for tex_type, asset_id in ROAD_ASSETS.items():
         paths = _download_asset(asset_id, cache_dir / asset_id)
         result[tex_type] = paths or {}
     return result
