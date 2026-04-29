@@ -177,6 +177,12 @@ class TerrainViewer(ShowBase):
         )
         self._refresh_time_text()
 
+        self.fps_text = OnscreenText(
+            text="", pos=(0.0, 0.95), scale=0.045,
+            fg=(1, 1, 1, 0.9), bg=(0, 0, 0, 0.4),
+            align=TextNode.ACenter, mayChange=True,
+        )
+
         if minimap is not None:
             minimap.attach_to(self)
 
@@ -293,6 +299,8 @@ class TerrainViewer(ShowBase):
             self.pos_text.setText(
                 f"lat {lat_arr[0]:.6f}°  lon {lon_arr[0]:.6f}°  alt {alt:.0f} m"
             )
+
+        self.fps_text.setText(f"{globalClock.getAverageFrameRate():.0f} fps")  # noqa: F821
 
         return Task.cont
 
