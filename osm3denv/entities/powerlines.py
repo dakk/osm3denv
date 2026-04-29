@@ -167,11 +167,9 @@ class PowerLines(MapEntity):
         from osm3denv.render.helpers import attach_lines
 
         if self._cables:
-            np_ = attach_lines(parent, "power_cables", self._cables,
-                                _CABLE_COLOR, thickness=0.8)
-            np_.setLightOff()
+            attach_lines(parent, "power_cables", self._cables,
+                         _CABLE_COLOR, thickness=0.8)
 
         if self._structures:
-            np_ = attach_lines(parent, "power_structures", self._structures,
-                                _STRUCTURE_COLOR, thickness=1.5)
-            np_.setLightOff()
+            attach_lines(parent, "power_structures", self._structures,
+                         _STRUCTURE_COLOR, thickness=1.5)
